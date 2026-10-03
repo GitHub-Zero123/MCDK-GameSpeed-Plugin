@@ -78,7 +78,11 @@ $hookDll = (Resolve-Path './build/windows-x64-gl32/plugins/game-speed/Release/ga
 
 倍率为 `0.01～16`，`0` 表示暂停；`resume` 恢复暂停前倍率。`F8` 或 `Ctrl+Shift+G` 显示/隐藏操作面板；若笔记本 F8 控制系统功能，可按 `Fn+F8`，或直接使用 `Ctrl+Shift+G`。旧的 `Insert` 快捷键仍有效。面板提供预设倍率、滑块、数值输入、暂停和恢复 1 倍；打开时还可用 `Pause`、`Home`、`+/-`。UI 自身使用真实 QPC 时间，因此暂停游戏计时后仍能操作。
 
-界面采用渐变、柔化光效、阴影和过渡动画；标题栏可拖动，鼠标离开游戏窗口后松开也能结束拖动。倍率轨迹记录最近 12 秒的真实倍率，包含暂停状态及当前倍率持续时间。小窗口下内容可滚动，标题和快捷键栏保持可见。`Esc` 只隐藏面板，再按 `F8` 或 `Ctrl+Shift+G` 可重新打开。
+界面采用用户提供的 Ore UI 组件库风格：原版绿色主按钮、浅灰次按钮、方角像素边框、按下下沉效果及 Minecraft Seven/Ten 字体。按钮直接使用 `D:/Zero123/.Temps/MCTest/oreui-unpacked/test/hbui` 的原始默认、悬停、按下及焦点贴图，按原图九宫格切片渲染，保留深色外框、像素高光和下沿；使用最近邻采样避免边缘模糊。颜色、间距和字体适配为 RmlUi RCSS；字体及按钮资源随插件包提供，来源和原始文件校验见 `assets/oreui/provenance.json`。
+
+标题栏可拖动，鼠标离开游戏窗口后松开也能结束拖动。倍率轨迹记录最近 12 秒的真实倍率，包含暂停状态及当前倍率持续时间。小窗口下内容可滚动，标题和快捷键栏保持可见。`Esc` 只隐藏面板，再按 `F8` 或 `Ctrl+Shift+G` 可重新打开。
+
+滑块按原版 BaseSlider 的灰色轨道、绿色进度和 32×32 方形手柄绘制，保留悬停、拖动及键盘焦点反馈。刻度采用两段对数映射：左半段为 0.01～1 倍，右半段为 1～16 倍，1 倍位于正中；标尺为 0.01 / 0.1 / 1 / 4 / 16 倍。拖动实时更新倍率并保留两位小数，暂停时显示恢复倍率；拖动期间状态刷新不会抢回手柄位置。
 
 控制管道 `\\.\pipe\MCDK.GameSpeed.<pid>` 只允许同一 Windows 用户和 SYSTEM，并拒绝远程连接。注入器检查目标和 DLL 均为 x64，使用实际远程系统模块加 RVA 定位 `LoadLibraryW`，支持 Unicode DLL 路径。连接或加载超时会返回错误。
 
@@ -113,4 +117,4 @@ CTest 包含确定性时钟测试、边界/溢出/小数累计和多线程测试
 | [MinHook](https://github.com/TsudaKageyu/minhook) | `v1.3.4` | QPC 和 OpenGL 入口 Hook |
 | [FreeType](https://github.com/freetype/freetype) | `VER-2-14-3` | 字体渲染 |
 
-RmlUi [渲染接口文档](https://mikke89.github.io/RmlUiDoc/pages/cpp_manual/interfaces/render.html)与[集成文档](https://mikke89.github.io/RmlUiDoc/pages/cpp_manual/integrating.html)说明了 UI 接口和渲染生命周期。各第三方库许可证保留在子模块中；发布包额外带有字体许可证。`.gitignore` 排除构建目录、IDE 状态、二进制、日志和本机 `.mcdev.json`，不会忽略源代码或子模块。
+RmlUi [渲染接口文档](https://mikke89.github.io/RmlUiDoc/pages/cpp_manual/interfaces/render.html)与[集成文档](https://mikke89.github.io/RmlUiDoc/pages/cpp_manual/integrating.html)说明了 UI 接口和渲染生命周期。各第三方库许可证保留在子模块中；Ore UI 字体保留原始文件及嵌入元数据。`.gitignore` 排除构建目录、IDE 状态、二进制、日志和本机 `.mcdev.json`，不会忽略源代码或子模块。

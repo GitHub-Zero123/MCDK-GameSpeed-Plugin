@@ -2,183 +2,224 @@
 <head>
     <title>GameSpeed · 游戏变速</title>
     <style>
-        body { width: 100%; height: 100%; margin: 0; font-family: Lato; font-size: 13dp; color: #e9f0f6; }
+        /* Original OreUI button sprites, sliced exactly like menus-theme. */
+        @spritesheet oreui-buttons {
+            src: oreui/textures/button-atlas.tga;
+            resolution: 1x;
+            ore-primary: 0px 0px 5px 7px;
+            ore-primary-inner: 2px 2px 1px 1px;
+            ore-primary-hover: 8px 0px 5px 7px;
+            ore-primary-hover-inner: 10px 2px 1px 1px;
+            ore-primary-pressed: 16px 0px 5px 5px;
+            ore-primary-pressed-inner: 18px 2px 1px 1px;
+            ore-primary-focus: 24px 0px 7px 9px;
+            ore-primary-focus-inner: 27px 3px 1px 1px;
+            ore-neutral: 0px 10px 5px 7px;
+            ore-neutral-inner: 2px 12px 1px 1px;
+            ore-neutral-hover: 8px 10px 5px 7px;
+            ore-neutral-hover-inner: 10px 12px 1px 1px;
+            ore-neutral-pressed: 16px 10px 5px 5px;
+            ore-neutral-pressed-inner: 18px 12px 1px 1px;
+            ore-neutral-focus: 24px 10px 7px 9px;
+            ore-neutral-focus-inner: 27px 13px 1px 1px;
+            ore-secondary: 0px 20px 5px 7px;
+            ore-secondary-inner: 2px 22px 1px 1px;
+            ore-secondary-hover: 8px 20px 5px 7px;
+            ore-secondary-hover-inner: 10px 22px 1px 1px;
+            ore-secondary-pressed: 16px 20px 5px 5px;
+            ore-secondary-pressed-inner: 18px 22px 1px 1px;
+            ore-secondary-focus: 24px 20px 7px 9px;
+            ore-secondary-focus-inner: 27px 23px 1px 1px;
+        }
+        body { width: 100%; height: 100%; margin: 0; font-family: Ore UI; font-size: 13dp; color: #ffffff; }
         div { display: block; }
-        button, input, #panel, .history-card { box-sizing: border-box; }
+        button, input, #panel, #readout, .history-card, #numeric-wrap { box-sizing: border-box; }
         #panel {
             position: absolute; left: 20dp; top: 20dp; width: 580dp; max-width: 94%;
-            display: flex; flex-direction: column; max-height: 92%;
-            border: 1dp #5b6a805e; border-radius: 18dp; overflow: hidden;
-            background-color: #0d1521ed;
-            decorator: linear-gradient(125deg, #2337478c, #131b298c 48%, #211d3780);
-            backdrop-filter: blur(14dp);
-            box-shadow: #02060c99 0dp 18dp 44dp 3dp, #6ce1d31a 0dp 0dp 34dp 0dp, #ffffff0b 0dp 1dp 0dp 0dp inset;
-            animation: panel-arrive 0.35s cubic-out;
-            transition: border-color 0.2s cubic-out;
+            display: flex; flex-direction: column; max-height: 92%; overflow: hidden;
+            border: 2dp #1e1e1f; border-top: 4dp #6b6c6d;
+            background-color: #313233; box-shadow: #00000099 0dp 8dp 0dp 0dp;
+            animation: panel-arrive 0.16s cubic-out;
         }
-        #panel.paused { border-color: #b69d705e; }
-        #panel.dragging { border-color: #a1e7dba0; box-shadow: #02060cbc 0dp 22dp 50dp 4dp, #6ce1d32a 0dp 0dp 38dp 0dp; }
+        #panel.paused { border-top-color: #b1b2b5; }
+        #panel.dragging { border-top-color: #ffffff; }
         @keyframes panel-arrive {
-            from { opacity: 0; transform: translateY(12dp) scale(0.985); }
-            to { opacity: 1; transform: translateY(0dp) scale(1); }
-        }
-        @keyframes ambient-breathe {
-            from { opacity: 0.4; transform: translateX(0dp); }
-            to { opacity: 0.7; transform: translateX(14dp); }
+            from { opacity: 0; transform: translateY(8dp); }
+            to { opacity: 1; transform: translateY(0dp); }
         }
         @keyframes live-breathe {
-            from { opacity: 0.45; }
+            from { opacity: 0.5; }
             to { opacity: 1; }
         }
-        .ambient { position: absolute; pointer-events: none; z-index: 0; border-radius: 90dp; filter: blur(16dp); }
-        #ambient-teal { left: -60dp; top: 35dp; width: 240dp; height: 150dp; decorator: radial-gradient(#63e7c828, #63e7c800); animation: ambient-breathe 5s cubic-in-out infinite alternate; }
-        #ambient-violet { right: -50dp; top: 100dp; width: 210dp; height: 175dp; decorator: radial-gradient(#9582f331, #9582f300); animation: ambient-breathe 7s cubic-in-out infinite alternate; }
         #drag-handle {
-            position: relative; z-index: 1; display: flex; align-items: center; height: 60dp;
-            flex-shrink: 0;
-            padding: 0 18dp; gap: 11dp; border-bottom: 1dp #9aabc41a; cursor: move; drag: drag;
-            decorator: horizontal-gradient(#83e7d708 #9d86ed08);
+            position: relative; display: flex; align-items: center; height: 68dp; flex-shrink: 0;
+            padding: 0 16dp; gap: 12dp; border-bottom: 2dp #1e1e1f;
+            background-color: #48494a; cursor: move; drag: drag;
         }
         #monogram {
-            width: 34dp; height: 34dp; line-height: 34dp; text-align: center; font-size: 14dp; font-weight: bold;
-            color: #c8fff1; border: 1dp #71dcca59; border-radius: 10dp;
-            decorator: linear-gradient(135deg, #488b8755, #284d6555);
-            box-shadow: #65ddcb26 0dp 0dp 15dp 0dp;
+            width: 36dp; height: 36dp; line-height: 32dp; text-align: center;
+            font-family: Ore Ten; font-size: 18dp; color: #ffffff;
+            border: 2dp #00000000; border-bottom-width: 4dp;
+            background-color: #00000000;
+            decorator: ninepatch(ore-primary, ore-primary-inner, 4dp 4dp 8dp 4dp) border-box;
         }
-        #title-block { flex: 1; }
-        #heading { font-size: 19dp; font-weight: bold; line-height: 24dp; letter-spacing: 0.4dp; }
-        #subtitle { color: #8c9eb2; font-size: 10dp; line-height: 15dp; letter-spacing: 1dp; }
+        #title-block { flex: 1; min-width: 0; }
+        #heading { font-family: Ore Ten; font-size: 24dp; line-height: 30dp; letter-spacing: 0.4dp; }
+        #subtitle { font-family: Ore Seven; color: #d0d1d4; font-size: 11dp; line-height: 16dp; letter-spacing: 0.4dp; }
         #mode-pill {
-            padding: 5dp 9dp; border-radius: 20dp; border: 1dp #71dcca40;
-            color: #99e9d5; font-size: 11dp; background-color: #1b433a66; white-space: nowrap;
-            transition: background-color color border-color 0.18s cubic-out;
+            padding: 6dp 8dp; border: 2dp #1e1e1f; border-left: 4dp #52a535;
+            color: #a0e081; font-family: Ore Seven; font-size: 11dp;
+            background-color: #242425; white-space: nowrap;
         }
-        #mode-pill.paused { color: #e3c193; background-color: #63493255; border-color: #d2ab7d50; }
-        #mode-pill.boost { color: #cbbdff; background-color: #4c3b6f55; border-color: #aa91ed55; }
-        #mode-pill.slow { color: #a5d9f1; background-color: #29486255; border-color: #81b4d755; }
-        #close {
-            width: 28dp; height: 28dp; padding: 0; line-height: 26dp; font-size: 21dp; border-radius: 8dp;
-            background-color: #ffffff05; border-color: #ffffff18; color: #a5b3c5; drag: block;
-        }
-        #close:hover { color: #fff; background-color: #e38e8e24; border-color: #e38e8e66; }
-        #workspace { position: relative; z-index: 1; padding: 14dp 18dp 10dp; min-height: 0; flex-shrink: 1; overflow-x: hidden; overflow-y: auto; }
-        #workspace scrollbarvertical { width: 4dp; margin-right: 4dp; background-color: #7b91ae10; border-radius: 4dp; }
-        #workspace scrollbarvertical slidertrack { background-color: #0000; }
-        #workspace scrollbarvertical sliderbar { width: 4dp; min-height: 24dp; border-radius: 4dp; background-color: #88baac70; transition: background-color 0.15s cubic-out; }
-        #workspace scrollbarvertical sliderbar:hover, #workspace scrollbarvertical sliderbar:active { background-color: #adebdaa0; }
+        #mode-pill.paused { color: #e6e6e8; border-left-color: #b1b2b5; }
+        #mode-pill.boost { color: #a0e081; border-left-color: #6cc349; }
+        #mode-pill.slow { color: #d0d1d4; border-left-color: #52a535; }
+        #close { width: 36dp; height: 36dp; padding: 0; line-height: 24dp; font-family: Ore UI; font-size: 22dp; drag: block; }
+        #workspace { position: relative; padding: 16dp 16dp 12dp; min-height: 0; flex-shrink: 1; overflow-x: hidden; overflow-y: auto; }
+        #workspace scrollbarvertical { width: 8dp; margin-right: 4dp; background-color: #1e1e1f; }
+        #workspace scrollbarvertical slidertrack { background-color: #1e1e1f; }
+        #workspace scrollbarvertical sliderbar { width: 8dp; min-height: 24dp; border: 2dp #48494a; background-color: #8b8c90; }
+        #workspace scrollbarvertical sliderbar:hover, #workspace scrollbarvertical sliderbar:active { background-color: #d0d1d4; }
         #workspace scrollbarvertical sliderarrowdec, #workspace scrollbarvertical sliderarrowinc { display: none; }
-        #hero { display: flex; align-items: stretch; gap: 18dp; height: 104dp; }
-        #readout { flex: 1; min-width: 218dp; }
-        .eyebrow { color: #92a4bb; font-size: 11dp; line-height: 16dp; letter-spacing: 0.5dp; }
-        #speed-readout { display: flex; align-items: baseline; height: 68dp; gap: 6dp; }
-        #current-speed { color: #bafced; font-size: 60dp; font-weight: bold; line-height: 68dp; letter-spacing: -1.2dp; }
-        #speed-unit { font-size: 27dp; color: #73b9a9; }
-        #speed-caption { color: #77938f; font-size: 11dp; line-height: 16dp; }
-        .history-card {
-            width: 255dp; padding: 10dp 13dp 8dp; border: 1dp #8294b328; border-radius: 12dp;
-            background-color: #0b132b60; decorator: linear-gradient(145deg, #6489ba12, #8a62b619);
-        }
-        .history-heading { display: flex; align-items: center; justify-content: space-between; font-size: 11dp; color: #adbad0; }
-        #live-mark { display: flex; align-items: center; gap: 5dp; color: #84c3b4; font-size: 9dp; letter-spacing: 0.8dp; }
-        #live-dot { width: 4dp; height: 4dp; border-radius: 4dp; background-color: #8febd4; box-shadow: #83e5cc90 0dp 0dp 6dp 0dp; animation: live-breathe 1.8s cubic-in-out infinite alternate; }
-        #speed-history {
-            display: flex; align-items: flex-end; gap: 4dp; height: 44dp; margin-top: 9dp;
-            color: #657a91; font-size: 10dp; border-bottom: 1dp #677c9824;
-        }
-        .history-bar {
-            flex: 1; min-height: 2dp; max-height: 100%; border-radius: 3dp 3dp 0dp 0dp;
-            decorator: vertical-gradient(#81dbcfe8 #416d9270);
-            transition: height opacity 0.3s cubic-out;
-        }
-        .history-bar.recent { decorator: vertical-gradient(#a6ccf0e8 #596a9870); }
-        .history-bar.latest { decorator: vertical-gradient(#c3b1fff5 #847ab390); }
-        .history-bar.paused { decorator: vertical-gradient(#c7a97799 #6f5c4766); }
+        #hero { display: flex; align-items: stretch; gap: 12dp; height: 132dp; }
+        #readout { flex: 1; min-width: 218dp; padding: 10dp 12dp 8dp; background-color: #242425; border: 2dp #1e1e1f; border-bottom: 4dp #3c8527; }
+        .eyebrow { font-family: Ore Seven; color: #d0d1d4; font-size: 12dp; line-height: 16dp; letter-spacing: 0.4dp; }
+        #speed-readout { display: flex; align-items: baseline; height: 68dp; gap: 8dp; }
+        #current-speed { font-family: Ore Seven; color: #ffffff; font-size: 54dp; line-height: 68dp; }
+        #speed-unit { font-family: Ore Seven; font-size: 28dp; color: #a0e081; }
+        #speed-caption { color: #b1b2b5; font-size: 11dp; line-height: 16dp; }
+        .history-card { width: 256dp; padding: 10dp 12dp 8dp; border: 2dp #1e1e1f; border-bottom: 4dp #48494a; background-color: #242425; }
+        .history-heading { display: flex; align-items: center; justify-content: space-between; font-size: 12dp; color: #ffffff; }
+        #live-mark { display: flex; align-items: center; gap: 4dp; color: #a0e081; font-family: Ore Seven; font-size: 10dp; letter-spacing: 0.4dp; }
+        #live-dot { width: 4dp; height: 4dp; background-color: #6cc349; animation: live-breathe 1.8s cubic-in-out infinite alternate; }
+        #speed-history { display: flex; align-items: flex-end; gap: 4dp; height: 48dp; margin-top: 12dp; color: #b1b2b5; font-size: 11dp; border-bottom: 2dp #48494a; }
+        .history-bar { flex: 1; min-height: 2dp; max-height: 100%; background-color: #3c8527; border-top: 2dp #52a535; transition: height opacity 0.2s cubic-out; }
+        .history-bar.recent { background-color: #52a535; border-top-color: #6cc349; }
+        .history-bar.latest { background-color: #6cc349; border-top-color: #a0e081; }
+        .history-bar.paused { background-color: #6b6c6d; border-top-color: #b1b2b5; }
         .history-bar.empty { opacity: 0; }
-        .history-meta { display: flex; justify-content: space-between; margin-top: 7dp; color: #7e92aa; font-size: 10dp; }
-        #held-duration { color: #acbdd0; }
-        #preset-label { margin-top: 12dp; margin-bottom: 7dp; display: flex; justify-content: space-between; }
-        #range-hint { color: #75879e; font-size: 10dp; }
+        .history-meta { display: flex; justify-content: space-between; margin-top: 8dp; color: #b1b2b5; font-size: 11dp; }
+        #held-duration { font-family: Ore Seven; color: #ffffff; }
+        #preset-label { margin-top: 16dp; margin-bottom: 8dp; display: flex; justify-content: space-between; }
+        #range-hint { font-family: Ore Seven; color: #b1b2b5; font-size: 11dp; }
         #presets { display: flex; gap: 8dp; }
+        /* Transparent borders reserve layout space; original sprites paint the faces. */
         button {
-            display: inline-block; padding: 0 10dp; height: 33dp; line-height: 31dp; text-align: center;
-            font-size: 12dp; color: #b9c7d9; border: 1dp #62759140; border-radius: 8dp;
-            background-color: #25344970; cursor: pointer; tab-index: auto;
-            transition: background-color border-color color transform 0.16s cubic-out;
+            display: inline-block; padding: 0 8dp; height: 44dp; line-height: 32dp; text-align: center;
+            font-family: Ore Seven; font-size: 14dp; color: #ffffff;
+            border: 4dp #00000000; border-bottom-width: 8dp;
+            background-color: #00000000; cursor: pointer; tab-index: auto;
+            decorator: ninepatch(ore-neutral, ore-neutral-inner, 4dp 4dp 8dp 4dp) border-box;
         }
-        button:hover { background-color: #42647d75; border-color: #8dbcc380; color: #eafff9; transform: translateY(-1dp); }
-        button:active { background-color: #457f7caa; transform: translateY(1dp) scale(0.98); }
-        button:focus-visible, input:focus-visible { border-color: #a4e9dc; box-shadow: #79dcca35 0dp 0dp 8dp 0dp; }
+        button:hover { decorator: ninepatch(ore-neutral-hover, ore-neutral-hover-inner, 4dp 4dp 8dp 4dp) border-box; }
+        button:focus-visible { decorator: ninepatch(ore-neutral-focus, ore-neutral-focus-inner, 6dp 6dp 10dp 6dp) border-box; }
+        button:active { height: 40dp; border-bottom-width: 4dp; transform: translateY(4dp); decorator: ninepatch(ore-neutral-pressed, ore-neutral-pressed-inner, 4dp) border-box; }
+        #close:active { height: 32dp; }
+        input:focus-visible { box-shadow: #1e1e1f 0dp 0dp 0dp 2dp, #ffffff 0dp 0dp 0dp 4dp; }
         #presets button { flex: 1; padding: 0; }
-        #presets button.selected { color: #c7fff0; border-color: #7ddac582; background-color: #28594e80; box-shadow: #62d8b914 0dp 0dp 12dp 0dp inset; }
-        #precision { display: flex; flex-wrap: wrap; gap: 8dp; align-items: center; margin-top: 12dp; }
+        #presets button.selected, #apply, #pause {
+            color: #ffffff; decorator: ninepatch(ore-primary, ore-primary-inner, 4dp 4dp 8dp 4dp) border-box;
+        }
+        #presets button.selected:hover, #apply:hover, #pause:hover { decorator: ninepatch(ore-primary-hover, ore-primary-hover-inner, 4dp 4dp 8dp 4dp) border-box; }
+        #presets button.selected:focus-visible, #apply:focus-visible, #pause:focus-visible { decorator: ninepatch(ore-primary-focus, ore-primary-focus-inner, 6dp 6dp 10dp 6dp) border-box; }
+        #presets button.selected:active, #apply:active, #pause:active { decorator: ninepatch(ore-primary-pressed, ore-primary-pressed-inner, 4dp) border-box; }
+        #panel.paused #pause { decorator: ninepatch(ore-neutral, ore-neutral-inner, 4dp 4dp 8dp 4dp) border-box; }
+        #panel.paused #pause:hover { decorator: ninepatch(ore-neutral-hover, ore-neutral-hover-inner, 4dp 4dp 8dp 4dp) border-box; }
+        #panel.paused #pause:focus-visible { decorator: ninepatch(ore-neutral-focus, ore-neutral-focus-inner, 6dp 6dp 10dp 6dp) border-box; }
+        #panel.paused #pause:active { decorator: ninepatch(ore-neutral-pressed, ore-neutral-pressed-inner, 4dp) border-box; }
+        #precision { display: flex; flex-wrap: wrap; gap: 8dp; align-items: center; margin-top: 16dp; }
         #value-controls, #transport-controls { display: flex; align-items: center; flex-shrink: 0; gap: 8dp; }
-        #numeric-wrap { display: flex; height: 33dp; align-items: center; border: 1dp #67809b50; border-radius: 8dp; background-color: #08111e99; }
-        #speed-input { width: 72dp; height: 31dp; padding: 6dp 10dp; color: #e1f5f1; background-color: #0000; border: 0dp; font-size: 13dp; tab-index: auto; }
-        #unit { padding-right: 10dp; color: #758ea0; font-size: 12dp; }
-        #apply { width: 65dp; color: #9ce4d4; border-color: #64bcaa60; background-color: #20494366; }
+        #numeric-wrap { display: flex; height: 44dp; align-items: center; border: 2dp #1e1e1f; border-top: 4dp #151516; border-bottom-color: #58585a; background-color: #242425; }
+        #speed-input { width: 78dp; height: 38dp; padding: 8dp; font-family: Ore Seven; color: #ffffff; background-color: #00000000; border: 0dp; font-size: 16dp; tab-index: auto; }
+        #unit { padding-right: 8dp; font-family: Ore Seven; color: #d0d1d4; font-size: 14dp; }
+        #apply { width: 68dp; }
         #precision-gap { flex: 1; }
-        #pause { width: 132dp; color: #d9fff5; border-color: #8ce7d879; decorator: horizontal-gradient(#39776d80 #335e7e80); }
-        #pause:hover { background-color: #589e8e55; box-shadow: #7cddc930 0dp 0dp 15dp 0dp; }
-        #reset { width: 99dp; }
-        #speed-slider { display: block; width: 100%; height: 26dp; margin-top: 7dp; tab-index: auto; }
-        #speed-slider slidertrack { height: 5dp; margin-top: 11dp; border-radius: 5dp; background-color: #55688035; }
-        #speed-slider sliderprogress { height: 5dp; border-radius: 5dp; decorator: horizontal-gradient(#58b9ad #aa9bdf); }
+        #pause { width: 132dp; }
+        #reset { width: 100dp; color: #1e1e1f; decorator: ninepatch(ore-secondary, ore-secondary-inner, 4dp 4dp 8dp 4dp) border-box; }
+        #reset:hover { decorator: ninepatch(ore-secondary-hover, ore-secondary-hover-inner, 4dp 4dp 8dp 4dp) border-box; }
+        #reset:focus-visible { decorator: ninepatch(ore-secondary-focus, ore-secondary-focus-inner, 6dp 6dp 10dp 6dp) border-box; }
+        #reset:active { decorator: ninepatch(ore-secondary-pressed, ore-secondary-pressed-inner, 4dp) border-box; }
+        /* BaseSlider uses a square thumb with a separate, straight lower face. */
+        #slider-section { margin-top: 16dp; padding: 12dp; border: 2dp #1e1e1f; background-color: #242425; }
+        #slider-heading { display: flex; align-items: center; justify-content: space-between; gap: 8dp; }
+        #slider-title { font-family: Ore Ten; font-size: 14dp; line-height: 20dp; }
+        #slider-meta { display: flex; align-items: center; gap: 8dp; }
+        #slider-caption { color: #b1b2b5; font-size: 11dp; line-height: 16dp; }
+        #slider-value { padding: 2dp 8dp; border: 2dp #1e1e1f; background-color: #313233; font-family: Ore Seven; color: #a0e081; font-size: 14dp; line-height: 20dp; white-space: nowrap; }
+        #panel.paused #slider-value { color: #d0d1d4; }
+        #slider-track-area { position: relative; margin-top: 8dp; }
+        #speed-slider { display: block; width: 100%; height: 48dp; margin: 0; border: 0dp; tab-index: auto; }
+        #speed-slider slidertrack, #speed-slider sliderprogress, #speed-slider sliderbar { box-sizing: border-box; }
+        #speed-slider slidertrack {
+            height: 12dp; margin-top: 18dp; border: 2dp #1e1e1f; overflow: hidden;
+            background-color: #8c8d90;
+            box-shadow: #ffffff33 0dp 2dp 0dp 0dp inset, #ffffff19 2dp 0dp 0dp 0dp inset, #00000026 0dp -2dp 0dp 0dp inset;
+        }
+        #speed-slider sliderprogress {
+            height: 8dp; margin-left: 2dp; margin-top: 2dp; border: 0dp; background-color: #3c8527;
+            box-shadow: #ffffff33 0dp 2dp 0dp 0dp inset, #ffffff19 2dp 0dp 0dp 0dp inset, #00000026 0dp -2dp 0dp 0dp inset;
+        }
         #speed-slider sliderbar {
-            width: 15dp; height: 15dp; margin-left: -7dp; margin-right: -7dp; margin-top: 6dp;
-            border: 1dp #ddfff7; border-radius: 15dp; background-color: #8ddfcb; cursor: pointer;
-            box-shadow: #70d9c74d 0dp 0dp 10dp 1dp; transition: background-color transform 0.15s cubic-out;
+            width: 32dp; height: 32dp; margin-left: 2dp; margin-right: -2dp; margin-top: 8dp;
+            border: 2dp #1e1e1f; background-color: #d0d1d4; cursor: pointer; decorator: none;
+            box-shadow: #58585a 0dp -4dp 0dp 0dp inset;
         }
-        #speed-slider sliderbar:hover { background-color: #e7fff6; transform: scale(1.15); }
-        #speed-slider sliderbar:active { background-color: #c6bafa; }
+        #speed-slider sliderbar:hover, #speed-slider sliderbar:active, #speed-slider:active sliderbar { background-color: #b1b2b5; }
+        #speed-slider:focus-visible { box-shadow: none; }
+        #speed-slider:focus-visible sliderbar { box-shadow: #58585a 0dp -4dp 0dp 0dp inset, #242425 0dp 0dp 0dp 2dp, #ffffff 0dp 0dp 0dp 4dp; }
+        #speed-slider.paused sliderprogress { background-color: #6b6c6d; }
         #speed-slider sliderarrowdec, #speed-slider sliderarrowinc { display: none; }
-        #scale-labels { display: flex; justify-content: space-between; font-size: 10dp; color: #677d96; line-height: 14dp; }
-        #input-error { color: #efb899; font-size: 11dp; line-height: 14dp; }
-        #status-row { display: flex; flex-wrap: wrap; gap: 4dp; align-items: center; justify-content: space-between; margin-top: 10dp; padding-top: 10dp; border-top: 1dp #8a9bb222; }
-        #clock-status { color: #829ab0; font-size: 10dp; line-height: 15dp; }
-        #time-note { color: #72879f; font-size: 10dp; white-space: nowrap; }
-        #help {
-            position: relative; z-index: 1; display: flex; flex-wrap: wrap; flex-shrink: 0; gap: 4dp; justify-content: space-between; align-items: center;
-            padding: 9dp 18dp 11dp; border-top: 1dp #889abb1c; background-color: #08101b38;
-            color: #8296ac; font-size: 10dp; line-height: 17dp;
-        }
-        #shortcuts { display: flex; flex-wrap: wrap; align-items: center; gap: 5dp; }
-        .key { display: inline-block; padding: 0dp 5dp; line-height: 16dp; color: #b7c8d8; border: 1dp #7d94ae40; border-radius: 4dp; background-color: #a5bdd10a; }
-        #move-help { color: #647b94; }
+        #slider-ticks { position: absolute; left: 18dp; right: 18dp; top: 42dp; height: 6dp; pointer-events: none; }
+        .slider-tick { position: absolute; top: 0; width: 2dp; height: 4dp; background-color: #6b6c6d; transform: translateX(-1dp); }
+        .slider-tick.normal { height: 6dp; background-color: #52a535; }
+        #scale-labels { position: relative; height: 34dp; margin: 0 18dp; font-family: Ore Seven; font-size: 11dp; color: #b1b2b5; line-height: 16dp; pointer-events: none; }
+        .scale-label { position: absolute; top: 0; width: 48dp; text-align: center; transform: translateX(-50%); }
+        .scale-label.normal { color: #ffffff; }
+        .normal-speed-label { display: block; color: #a0e081; font-family: Ore UI; font-size: 10dp; line-height: 14dp; }
+        #input-error { color: #ff9d9d; font-size: 12dp; line-height: 16dp; }
+        #status-row { display: flex; flex-wrap: wrap; gap: 4dp; align-items: center; justify-content: space-between; margin-top: 12dp; padding-top: 12dp; border-top: 2dp #48494a; }
+        #clock-status { color: #d0d1d4; font-size: 11dp; line-height: 16dp; }
+        #time-note { color: #b1b2b5; font-size: 11dp; white-space: nowrap; }
+        #help { position: relative; display: flex; flex-wrap: wrap; flex-shrink: 0; gap: 4dp; justify-content: space-between; align-items: center; padding: 8dp 16dp 12dp; border-top: 2dp #1e1e1f; background-color: #242425; color: #d0d1d4; font-size: 11dp; line-height: 20dp; }
+        #shortcuts { display: flex; flex-wrap: wrap; align-items: center; gap: 4dp; }
+        .key { display: inline-block; padding: 0 4dp; line-height: 16dp; font-family: Ore Seven; color: #ffffff; border: 2dp #00000000; border-bottom-width: 4dp; background-color: #00000000; decorator: ninepatch(ore-neutral, ore-neutral-inner, 2dp 2dp 4dp 2dp) border-box; }
+        #move-help { color: #b1b2b5; }
         @media (max-width: 560dp) {
             #panel { width: 94%; left: 3%; top: 12dp; }
             #drag-handle { padding: 0 12dp; gap: 8dp; }
             #workspace { padding: 12dp 12dp 10dp; }
-            #hero { gap: 10dp; }
-            #readout { min-width: 160dp; }
-            #current-speed { font-size: 49dp; }
-            .history-card { width: 210dp; padding-left: 9dp; padding-right: 9dp; }
-            #presets { gap: 5dp; }
-            #precision { gap: 5dp; }
-            #value-controls, #transport-controls { gap: 5dp; }
-            #pause { width: 115dp; }
-            #reset { width: 88dp; }
+            #hero { gap: 8dp; }
+            #readout { min-width: 160dp; padding-left: 8dp; padding-right: 8dp; }
+            #current-speed { font-size: 48dp; }
+            .history-card { width: 210dp; padding-left: 8dp; padding-right: 8dp; }
+            #presets { gap: 4dp; }
+            #presets button { font-size: 12dp; }
+            #pause { width: 124dp; }
+            #reset { width: 96dp; }
             #help { padding-left: 12dp; padding-right: 12dp; }
         }
         @media (max-width: 430dp) {
-            #hero { flex-direction: column; height: 220dp; gap: 12dp; }
-            #readout { flex: 0 0 auto; min-width: 0; height: 104dp; }
-            .history-card { flex-shrink: 0; width: 100%; height: 104dp; }
-            #precision { justify-content: space-between; row-gap: 8dp; }
+            #hero { flex-direction: column; height: 272dp; gap: 8dp; }
+            #readout { flex: 0 0 auto; min-width: 0; height: 132dp; }
+            .history-card { flex-shrink: 0; width: 100%; height: 132dp; }
+            #precision { justify-content: space-between; row-gap: 12dp; }
             #precision-gap { display: none; }
-            #mode-pill { padding-left: 6dp; padding-right: 6dp; font-size: 10dp; }
-            #subtitle { letter-spacing: 0.4dp; }
+            #mode-pill { padding-left: 4dp; padding-right: 4dp; font-size: 10dp; }
+            #heading { font-size: 20dp; }
+            #subtitle { font-size: 10dp; }
+            #monogram { width: 28dp; height: 32dp; font-size: 15dp; line-height: 28dp; }
+            #close { width: 32dp; }
+            #presets button { font-size: 11dp; border-left-width: 2dp; border-right-width: 2dp; }
         }
     </style>
 </head>
 <body>
     <div id="panel">
-        <div id="ambient-teal" class="ambient"></div>
-        <div id="ambient-violet" class="ambient"></div>
         <div id="drag-handle">
             <div id="monogram">GS</div>
             <div id="title-block">
                 <div id="heading">游戏变速</div>
-                <div id="subtitle">GAME SPEED / MCDK</div>
+                <div id="subtitle">GAME SPEED / CONTROL</div>
             </div>
             <div id="mode-pill">等待计时状态</div>
             <button id="close">×</button>
@@ -186,14 +227,14 @@
         <div id="workspace">
             <div id="hero">
                 <div id="readout">
-                    <div class="eyebrow">实时倍率 / PLAYBACK RATE</div>
+                    <div class="eyebrow">实时倍率 / GAME SPEED</div>
                     <div id="speed-readout"><div id="current-speed">1.00</div><span id="speed-unit">×</span></div>
-                    <div id="speed-caption">让游戏跟随你的节奏</div>
+                    <div id="speed-caption">以你的节奏探索世界</div>
                 </div>
                 <div class="history-card">
                     <div class="history-heading">
                         <span>倍率轨迹</span>
-                        <div id="live-mark"><div id="live-dot"></div><span>LIVE HISTORY</span></div>
+                        <div id="live-mark"><div id="live-dot"></div><span>LIVE</span></div>
                     </div>
                     <div id="speed-history">等待倍率采样</div>
                     <div class="history-meta"><span>当前倍率持续</span><span id="held-duration">--:--</span></div>
@@ -219,8 +260,29 @@
                     <button id="reset">重置 / 1×</button>
                 </div>
             </div>
-            <input id="speed-slider" type="range" min="0.01" max="16" step="0.01" value="1" />
-            <div id="scale-labels"><span>0.01× · 慢速</span><span>16× · 加速</span></div>
+            <div id="slider-section">
+                <div id="slider-heading">
+                    <span id="slider-title">倍率调节</span>
+                    <div id="slider-meta"><span id="slider-caption">拖动调节</span><span id="slider-value">1.00×</span></div>
+                </div>
+                <div id="slider-track-area">
+                    <input id="speed-slider" type="range" min="0" max="100" step="0.1" value="50" />
+                    <div id="slider-ticks">
+                        <div class="slider-tick" style="left: 0%;"></div>
+                        <div class="slider-tick" style="left: 25%;"></div>
+                        <div class="slider-tick normal" style="left: 50%;"></div>
+                        <div class="slider-tick" style="left: 75%;"></div>
+                        <div class="slider-tick" style="left: 100%;"></div>
+                    </div>
+                </div>
+                <div id="scale-labels">
+                    <span class="scale-label" style="left: 0%;">0.01×</span>
+                    <span class="scale-label" style="left: 25%;">0.1×</span>
+                    <span class="scale-label normal" style="left: 50%;">1×<span class="normal-speed-label">正常速度</span></span>
+                    <span class="scale-label" style="left: 75%;">4×</span>
+                    <span class="scale-label" style="left: 100%;">16×</span>
+                </div>
+            </div>
             <div id="input-error"></div>
             <div id="status-row"><div id="clock-status">等待游戏计时状态…</div><span id="time-note">暂停时面板仍可操作</span></div>
         </div>

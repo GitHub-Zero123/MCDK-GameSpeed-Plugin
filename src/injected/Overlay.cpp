@@ -728,9 +728,95 @@ private:
     std::string lastError;
 };
 
+std::vector<Rml::byte> ReadBytes(const std::filesystem::path& file, std::size_t maximum);
+
 class UiRenderer final : public RenderInterface_GL3 {
 public:
     explicit UiRenderer(HGLRC owner) : owner(owner) {}
+    Rml::TextureHandle LoadTexture(Rml::Vector2i& texture_dimensions, const Rml::String& source) override {
+        texture_dimensions = {};
+        const auto fail = [&](const char* reason) -> Rml::TextureHandle {
+            Log("Cannot load Ore UI texture '" + source + "': " + reason);
+            return {};
+        };
+        if (owner != wglGetCurrentContext())
+            return fail("the owning OpenGL context is not current.");
+        if (source.empty() || source.size() > 32767 || source.find('\0') != Rml::String::npos ||
+            !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, source.data(), static_cast<int>(source.size()), nullptr, 0))
+            return fail("the asset path is not valid UTF-8.");
+
+        // Memory-loaded RML has no file URL. Resolve its resource paths against
+        // this DLL's assets, without changing the game's process directory.
+        const std::filesystem::path requested(RmlWin32::ConvertToUTF16(source));
+        if (!requested.is_absolute() && requested.has_root_path())
+            return fail("drive-relative and root-relative asset paths are unsupported.");
+        std::error_code pathError;
+        const auto root = std::filesystem::weakly_canonical(g_assetDirectory, pathError);
+        if (pathError || root.empty())
+            return fail("the package asset directory is unavailable.");
+        const auto file = std::filesystem::weakly_canonical(requested.is_absolute() ? requested : root / requested, pathError);
+        if (pathError)
+            return fail("the asset path cannot be resolved.");
+        auto filePart = file.begin();
+        for (const auto& rootPart : root) {
+            if (filePart == file.end() || CompareStringOrdinal(rootPart.c_str(), static_cast<int>(rootPart.native().size()),
+                    filePart->c_str(), static_cast<int>(filePart->native().size()), TRUE) != CSTR_EQUAL)
+                return fail("the path is outside the package asset directory.");
+            ++filePart;
+        }
+        if (filePart == file.end())
+            return fail("the path names the asset directory instead of a texture.");
+        for (; filePart != file.end(); ++filePart) {
+            if (filePart->native().find(L':') != std::wstring::npos)
+                return fail("alternate data streams are unsupported.");
+        }
+        if (_wcsicmp(file.extension().c_str(), L".tga") != 0)
+            return fail("only packaged uncompressed TGA textures are supported.");
+
+        constexpr std::size_t kHeaderBytes = 18;
+        constexpr std::size_t kMaximumImageBytes = 64 * 1024 * 1024;
+        const auto bytes = ReadBytes(file, kHeaderBytes + kMaximumImageBytes);
+        if (bytes.size() < kHeaderBytes)
+            return fail("the texture is missing or has a truncated TGA header.");
+        // The packaged conversion uses type 2 BGRA, eight alpha bits, and a
+        // top-left origin; reject palette, RLE, and differently ordered files.
+        if (bytes[0] != 0 || bytes[1] != 0 || bytes[2] != 2 || bytes[3] != 0 || bytes[4] != 0 ||
+            bytes[5] != 0 || bytes[6] != 0 || bytes[7] != 0 || bytes[16] != 32 || bytes[17] != 0x28)
+            return fail("expected a 32-bit top-origin uncompressed TGA with eight alpha bits.");
+        const int width = static_cast<int>(bytes[12]) | (static_cast<int>(bytes[13]) << 8);
+        const int height = static_cast<int>(bytes[14]) | (static_cast<int>(bytes[15]) << 8);
+        GLint maximumTextureSize = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximumTextureSize);
+        if (width <= 0 || height <= 0 || width > 4096 || height > 4096 ||
+            width > maximumTextureSize || height > maximumTextureSize)
+            return fail("the TGA dimensions are invalid or exceed the renderer limit.");
+        const std::size_t imageBytes = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4;
+        if (imageBytes > kMaximumImageBytes || bytes.size() != kHeaderBytes + imageBytes)
+            return fail("the TGA pixel byte count does not match its dimensions.");
+
+        std::vector<Rml::byte> rgba(imageBytes);
+        for (std::size_t pixel = 0; pixel < imageBytes; pixel += 4) {
+            const auto* bgra = bytes.data() + kHeaderBytes + pixel;
+            const auto alpha = bgra[3];
+            // The GL3 backend expects premultiplied RGBA, including transparent
+            // padding between the original Ore UI nine-patch button images.
+            rgba[pixel] = static_cast<Rml::byte>((static_cast<unsigned int>(bgra[2]) * alpha) / 255);
+            rgba[pixel + 1] = static_cast<Rml::byte>((static_cast<unsigned int>(bgra[1]) * alpha) / 255);
+            rgba[pixel + 2] = static_cast<Rml::byte>((static_cast<unsigned int>(bgra[0]) * alpha) / 255);
+            rgba[pixel + 3] = alpha;
+        }
+        GLint previousTexture = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+        const auto texture = GenerateTexture({rgba.data(), rgba.size()}, {width, height});
+        if (texture) {
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture));
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            texture_dimensions = {width, height};
+        }
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture));
+        return texture ? texture : fail("OpenGL texture creation failed.");
+    }
     void ReleaseTexture(Rml::TextureHandle texture) override {
         // A lost GL context has already destroyed its textures. Deleting those
         // names in a replacement context could delete unrelated game resources.
@@ -750,8 +836,7 @@ HGLRC g_rejectedContext = nullptr;
 bool g_rmlInitialized = false;
 bool g_reflectingControls = false;
 bool g_documentVisible = false;
-std::vector<Rml::byte> g_latinFont;
-std::vector<Rml::byte> g_cjkFont;
+std::array<std::vector<Rml::byte>, 5> g_oreFonts;
 std::array<bool, 256> g_heldKeys{};
 std::array<bool, 3> g_heldButtons{};
 wchar_t g_pendingSurrogate = 0;
@@ -792,6 +877,26 @@ std::string FormatSpeed(double speed) {
     char buffer[32]{};
     std::snprintf(buffer, sizeof(buffer), "%.2f", speed);
     return buffer;
+}
+
+double SliderPositionForSpeed(double speed) {
+    if (!std::isfinite(speed))
+        return 50.;
+    speed = std::clamp(speed, .01, 16.);
+    // Two logarithmic halves place normal speed at the center: 0.01x to
+    // 1x occupies 0-50%, and 1x to 16x occupies 50-100%.
+    const double position = speed <= 1. ? 50. + 25. * std::log10(speed) :
+        50. + 50. * std::log(speed) / std::log(16.);
+    return std::clamp(position, 0., 100.);
+}
+
+double SpeedForSliderPosition(double position) {
+    if (!std::isfinite(position))
+        return 1.;
+    position = std::clamp(position, 0., 100.);
+    const double speed = position <= 50. ? std::pow(10., (position - 50.) / 25.) :
+        std::pow(16., (position - 50.) / 50.);
+    return std::clamp(std::round(speed * 100.) / 100., .01, 16.);
 }
 
 void AppendHistory(SpeedSample sample) {
@@ -913,6 +1018,17 @@ bool EditingSpeed() {
     return focused && focused->GetId() == "speed-input";
 }
 
+Rml::Element* SliderThumb(Rml::Element* slider) {
+    // WidgetSlider adds its thumb as a non-DOM child. Ordinary DOM searches
+    // miss it; its active state tracks pointer dragging, unlike keyboard focus.
+    for (int index = 0; slider && index < slider->GetNumChildren(true); ++index) {
+        auto* child = slider->GetChild(index);
+        if (child && child->GetTagName() == "sliderbar")
+            return child;
+    }
+    return nullptr;
+}
+
 void ReflectControls() {
     if (!g_document)
         return;
@@ -923,8 +1039,20 @@ void ReflectControls() {
         if (auto* control = dynamic_cast<Rml::ElementFormControl*>(g_document->GetElementById("speed-input")))
             control->SetValue(FormatSpeed(selected));
     }
-    if (auto* control = dynamic_cast<Rml::ElementFormControl*>(g_document->GetElementById("speed-slider")))
-        control->SetValue(FormatSpeed(std::clamp(selected, .01, 16.)));
+    if (auto* slider = g_document->GetElementById("speed-slider")) {
+        slider->SetClass("paused", status.paused);
+        const auto* thumb = SliderThumb(slider);
+        // Rounding slow speeds to 0.01x changes their inverse position. Let
+        // the pointer own the thumb until release while still updating labels.
+        if (!thumb || !thumb->IsPseudoClassSet("active")) {
+            if (auto* control = dynamic_cast<Rml::ElementFormControl*>(slider))
+                control->SetValue(FormatSpeed(SliderPositionForSpeed(selected)));
+        }
+    }
+    if (auto* value = g_document->GetElementById("slider-value"))
+        value->SetInnerRML(FormatSpeed(selected) + "×");
+    if (auto* caption = g_document->GetElementById("slider-caption"))
+        caption->SetInnerRML(status.paused ? "恢复倍率" : "拖动调节");
     if (auto* pause = g_document->GetElementById("pause"))
         pause->SetInnerRML(status.paused ? "继续运行" : "暂停时间");
     if (auto* panel = g_document->GetElementById("panel"))
@@ -966,6 +1094,16 @@ class UiEvents final : public Rml::EventListener {
         Rml::Element* element = event.GetTargetElement();
         const auto& type = event.GetType();
         if (type == "dragstart" || type == "drag" || type == "dragend") {
+            auto* slider = element;
+            while (slider && slider != g_document && slider->GetId() != "speed-slider")
+                slider = slider->GetParentNode();
+            if (slider && slider != g_document) {
+                // WidgetSlider clears the thumb's active state before this
+                // event bubbles to the document, allowing a final sync.
+                if (type == "dragend")
+                    ReflectControls();
+                return;
+            }
             auto* handle = element;
             while (handle && handle != g_document && handle->GetId() != "drag-handle")
                 handle = handle->GetParentNode();
@@ -990,8 +1128,12 @@ class UiEvents final : public Rml::EventListener {
             return;
         }
         if (event.GetType() == "change" && element && element->GetId() == "speed-slider") {
-            const double value = std::strtod(event.GetParameter<Rml::String>("value", "1").c_str(), nullptr);
-            if (std::isfinite(value) && SetSpeed(value)) ReflectControls();
+            const auto value = event.GetParameter<Rml::String>("value", "50");
+            char* end = nullptr;
+            const double position = std::strtod(value.c_str(), &end);
+            if (end && end != value.c_str() && *end == '\0' && std::isfinite(position) &&
+                SetSpeed(SpeedForSliderPosition(position)))
+                ReflectControls();
             return;
         }
         if (event.GetType() != "click")
@@ -1027,6 +1169,11 @@ void ResetUiInput() {
     g_draggingPanel = false;
     if (auto* panel = g_document ? g_document->GetElementById("panel") : nullptr)
         panel->SetClass("dragging", false);
+    if (auto* slider = g_document ? g_document->GetElementById("speed-slider") : nullptr) {
+        if (auto* thumb = SliderThumb(slider))
+            thumb->SetPseudoClass("active", false);
+        ReflectControls();
+    }
 }
 
 void DrainInput() {
@@ -1141,8 +1288,7 @@ void ShutdownUiOnRenderThread() {
     Rml::SetRenderInterface(nullptr);
     Rml::SetSystemInterface(nullptr);
     g_system.reset();
-    g_latinFont.clear();
-    g_cjkFont.clear();
+    for (auto& font : g_oreFonts) font.clear();
     g_heldKeys.fill(false);
     g_heldButtons.fill(false);
     g_pendingSurrogate = 0;
@@ -1174,18 +1320,23 @@ bool InitializeUiOnRenderThread(HWND window, HGLRC context, int width, int heigh
         return false;
     }
     g_rmlInitialized = true;
-    g_latinFont = ReadBytes(g_assetDirectory / L"LatoLatin-Regular.ttf", 8 * 1024 * 1024);
-    if (g_latinFont.empty() || !Rml::LoadFontFace({g_latinFont.data(), g_latinFont.size()}, "Lato", Rml::Style::FontStyle::Normal,
-            Rml::Style::FontWeight::Normal)) {
-        ReportError("Cannot load packaged assets/LatoLatin-Regular.ttf.");
-        return false;
-    }
-    wchar_t windowsDirectory[MAX_PATH]{};
-    if (GetWindowsDirectoryW(windowsDirectory, MAX_PATH)) {
-        g_cjkFont = ReadBytes(std::filesystem::path(windowsDirectory) / L"Fonts" / L"msyh.ttc", 64 * 1024 * 1024);
-        if (!g_cjkFont.empty())
-            Rml::LoadFontFace({g_cjkFont.data(), g_cjkFont.size()}, "Microsoft YaHei", Rml::Style::FontStyle::Normal,
-                Rml::Style::FontWeight::Normal, true);
+    struct FontSpec { const wchar_t* file; const char* family; Rml::Style::FontWeight weight; bool fallback; };
+    const std::array<FontSpec, 5> fonts{{
+        {L"oreui/fonts/OreBody-Regular.ttf", "Ore UI", Rml::Style::FontWeight::Normal, false},
+        {L"oreui/fonts/OreBody-Bold.ttf", "Ore UI", Rml::Style::FontWeight::Bold, false},
+        {L"oreui/fonts/OreSeven.otf", "Ore Seven", Rml::Style::FontWeight::Normal, false},
+        {L"oreui/fonts/OreTen.otf", "Ore Ten", Rml::Style::FontWeight::Normal, false},
+        {L"oreui/fonts/OreCjk-Regular.otf", "Ore CJK", Rml::Style::FontWeight::Normal, true}
+    }};
+    for (std::size_t index = 0; index < fonts.size(); ++index) {
+        const auto& spec = fonts[index];
+        auto& bytes = g_oreFonts[index];
+        bytes = ReadBytes(g_assetDirectory / spec.file, 16 * 1024 * 1024);
+        if (bytes.empty() || !Rml::LoadFontFace({bytes.data(), bytes.size()}, spec.family,
+                Rml::Style::FontStyle::Normal, spec.weight, spec.fallback)) {
+            ReportError("Cannot load packaged Ore UI font: " + RmlWin32::ConvertToUTF8(spec.file));
+            return false;
+        }
     }
     g_context = Rml::CreateContext("mcdk-gamespeed", {width, height});
     const auto document = ReadBytes(g_assetDirectory / L"speed.rml", 1024 * 1024);

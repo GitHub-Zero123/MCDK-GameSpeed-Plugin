@@ -292,7 +292,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     return DefWindowProcW(window, message, wparam, lparam);
 }
 
-int Child(const wchar_t* mappingName, bool compact) {
+int Child(const wchar_t* mappingName, bool compact, bool overview) {
     HANDLE mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, mappingName);
     if (!mapping) return 2;
     auto* shared = static_cast<SharedState*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
@@ -305,7 +305,8 @@ int Child(const wchar_t* mappingName, bool compact) {
     type.lpszClassName = L"GameSpeed.Isolated.OpenGL.Test";
     RegisterClassW(&type);
     const HWND window = CreateWindowExW(0, type.lpszClassName, L"GameSpeed isolated test", WS_OVERLAPPEDWINDOW,
-        0, 0, (compact ? 420 : Width) + 16, (compact ? 360 : Height) + 39, nullptr, nullptr, instance, nullptr);
+        0, 0, (compact ? 420 : overview ? 960 : Width) + 16,
+        (compact ? 360 : overview ? 720 : Height) + 39, nullptr, nullptr, instance, nullptr);
     if (!window) return 4;
     InterlockedExchange64(&shared->window, reinterpret_cast<LONG64>(window));
     HDC dc = GetDC(window);
@@ -491,7 +492,8 @@ double Slope(DWORD pid, SharedState* shared, const std::string& speed) {
 
 int wmain(int argc, wchar_t** argv) {
     if ((argc == 3 || argc == 4) && std::wstring_view(argv[1]) == L"--child")
-        return Child(argv[2], argc == 4 && std::wstring_view(argv[3]) == L"--compact");
+        return Child(argv[2], argc == 4 && std::wstring_view(argv[3]) == L"--compact",
+            argc == 4 && std::wstring_view(argv[3]) == L"--overview");
     const bool compact = argc == 3 && std::wstring_view(argv[2]) == L"--compact";
     const bool overview = argc == 3 && std::wstring_view(argv[2]) == L"--overview";
     if (argc != 2 && !compact && !overview) return 2;
@@ -504,6 +506,7 @@ int wmain(int argc, wchar_t** argv) {
     GetModuleFileNameW(nullptr, self.data(), static_cast<DWORD>(self.size()));
     std::wstring childCommand = L"\"" + std::wstring(self.data()) + L"\" --child \"" + mappingName + L"\"";
     if (compact) childCommand += L" --compact";
+    if (overview) childCommand += L" --overview";
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION child{};

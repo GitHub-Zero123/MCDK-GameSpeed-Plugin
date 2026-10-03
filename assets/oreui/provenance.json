@@ -1,0 +1,256 @@
+{
+  "source": "D:/Zero123/.Temps/MCTest/oreui-unpacked/test/hbui",
+  "theme_sources": [
+    "menus-theme-ab209e4f9d83a5a5ec11.css",
+    "index.css"
+  ],
+  "fonts": [
+    {
+      "file": "fonts/OreBody-Regular.ttf",
+      "source_file": "NotoSansMerged-Regular-5df70ade1ecaa8cdc5e2.ttf",
+      "size": 5431900,
+      "sha256": "9a88bcaaec0511b775de97c286fc50db1553bed00dbdc763835b8966077243c9"
+    },
+    {
+      "file": "fonts/OreBody-Bold.ttf",
+      "source_file": "NotoSans-Bold-14d47103ac29b8628156.ttf",
+      "size": 674528,
+      "sha256": "55bdac8fce7379f4b35cb231e4309d68b60ff127e0102330862f379f9aeb837c"
+    },
+    {
+      "file": "fonts/OreSeven.otf",
+      "source_file": "Minecraft-Seven-66398119c2c20ee73019.otf",
+      "size": 30784,
+      "sha256": "3ac46d75d4fe3aae7412d18e09047b70073a8e779488f72560c09f8c474fecc6"
+    },
+    {
+      "file": "fonts/OreTen.otf",
+      "source_file": "Minecraft-Ten-ed29a1bbe6a620b83378.otf",
+      "size": 19960,
+      "sha256": "1dd0c122794d0ac5c504e853143e078bd295f24b3a0d6ddd23dba2ca70b6e815"
+    },
+    {
+      "file": "fonts/OreCjk-Regular.otf",
+      "source_file": "NotoSansSC-Regular-a4317c614d07055b56ed.otf",
+      "size": 8368828,
+      "sha256": "8c37936063c7c8ab747a939e13833894f9edc80dd41b98874ca8f3938a33c32f"
+    }
+  ],
+  "notes": "User-provided Ore UI fonts and button skins; original files and embedded metadata preserved. Theme tokens adapted to RmlUi RCSS; button skins rendered from the original pixels.",
+  "button_skins": [
+    {
+      "file": "textures/primary-default.png",
+      "source_file": "pressable_elevated_primary_default-7a6e2edf98a626b182c2.png",
+      "sha256": "ccdfe87dc3548d432691f2ab3d094901203b96bfdd879e26402699f6b133e026",
+      "atlas_rect": [
+        0,
+        0,
+        5,
+        7
+      ],
+      "inner_rect": [
+        2,
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/primary-hover.png",
+      "source_file": "pressable_elevated_primary_hovered-bcb21ab092446cbcecb6.png",
+      "sha256": "0e291c1e364418f61b384b91f31743c62d6c1131b9d60863c25f3e378b9bef16",
+      "atlas_rect": [
+        8,
+        0,
+        5,
+        7
+      ],
+      "inner_rect": [
+        10,
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/primary-pressed.png",
+      "source_file": "pressable_primary_pressed-13b0f01c6c00e07322ca.png",
+      "sha256": "da0ab191f74d1700e764511a5e7382180256ebe9278163d8bccaebc0278e8f40",
+      "atlas_rect": [
+        16,
+        0,
+        5,
+        5
+      ],
+      "inner_rect": [
+        18,
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/primary-focus.png",
+      "source_file": "pressable_elevated_primary_focused-cc7df0bf833f92bb08dd.png",
+      "sha256": "7fa4e8e054b8778004d36bb3415f6dca907e4cacd52e334c0ad5e211f49b0f60",
+      "atlas_rect": [
+        24,
+        0,
+        7,
+        9
+      ],
+      "inner_rect": [
+        27,
+        3,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/neutral-default.png",
+      "source_file": "pressable_elevated_neutral_default-48cdf8535bfd48b47c2a.png",
+      "sha256": "17815711fea2810a9a8c3c54278996a845db225b058948c7d80852ea6e0d4f12",
+      "atlas_rect": [
+        0,
+        10,
+        5,
+        7
+      ],
+      "inner_rect": [
+        2,
+        12,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/neutral-hover.png",
+      "source_file": "pressable_elevated_neutral_hovered-dcbd873ad9e83d24dc7a.png",
+      "sha256": "5cd71d00a7afe1fb753e1b529e00c9c0eedb67b532cae7b31a25c06e9ddea4a5",
+      "atlas_rect": [
+        8,
+        10,
+        5,
+        7
+      ],
+      "inner_rect": [
+        10,
+        12,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/neutral-pressed.png",
+      "source_file": "pressable_neutral_pressed-aad8b64fc0f155676218.png",
+      "sha256": "e00aec4775d6f1b1d816022646ce8162d97f13af81c04f1710aa13348257cfc6",
+      "atlas_rect": [
+        16,
+        10,
+        5,
+        5
+      ],
+      "inner_rect": [
+        18,
+        12,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/neutral-focus.png",
+      "source_file": "pressable_elevated_neutral_focused-b28fc482cadde858740c.png",
+      "sha256": "fb4573a2539db4dd95c2da8259971eba77c387e8bedd131d6f0099d9e98f30ff",
+      "atlas_rect": [
+        24,
+        10,
+        7,
+        9
+      ],
+      "inner_rect": [
+        27,
+        13,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/secondary-default.png",
+      "source_file": "pressable_elevated_secondary_default-0aacffbfa726a8184fc5.png",
+      "sha256": "903c40892eaf66d292f2aec92c3e94745095f0c29b44e4710d394e4e6f3cab6a",
+      "atlas_rect": [
+        0,
+        20,
+        5,
+        7
+      ],
+      "inner_rect": [
+        2,
+        22,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/secondary-hover.png",
+      "source_file": "pressable_elevated_secondary_hovered-758970b376da9eb299da.png",
+      "sha256": "4804a457a3963107e0373699cc8b36f36837b2bfc0d03ac7406f2309ed2f371d",
+      "atlas_rect": [
+        8,
+        20,
+        5,
+        7
+      ],
+      "inner_rect": [
+        10,
+        22,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/secondary-pressed.png",
+      "source_file": "pressable_secondary_pressed-87bba1faba891ebfa7fc.png",
+      "sha256": "486020fdbd2207ff1ae3566ade53361923b5d8c7508a473dc3bcb4282ac7944a",
+      "atlas_rect": [
+        16,
+        20,
+        5,
+        5
+      ],
+      "inner_rect": [
+        18,
+        22,
+        1,
+        1
+      ]
+    },
+    {
+      "file": "textures/secondary-focus.png",
+      "source_file": "pressable_elevated_secondary_focused-05d59cd4654230c9b01d.png",
+      "sha256": "9365d603de0cc95006096e2cdb44d63fc711e80f00b918a1540309edee9af5bf",
+      "atlas_rect": [
+        24,
+        20,
+        7,
+        9
+      ],
+      "inner_rect": [
+        27,
+        23,
+        1,
+        1
+      ]
+    }
+  ],
+  "button_atlas": {
+    "file": "textures/button-atlas.tga",
+    "sha256": "dad9c76af9a1634d707ded1ad256e7ea472f07a7695092d39384b97cdb1e30fb",
+    "format": "Uncompressed TGA, BGRA32, top-left origin",
+    "size": [
+      32,
+      32
+    ],
+    "notes": "Original PNG pixels packed without resampling. RmlUi ninepatch uses original 1x1 center and explicit 4/4/8/4dp or 4dp pressed edges, nearest sampling."
+  }
+}
