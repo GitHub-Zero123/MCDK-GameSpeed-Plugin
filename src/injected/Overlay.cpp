@@ -34,7 +34,9 @@ ClipFunction g_clip = nullptr;
 PositionFunction g_position = nullptr;
 HMODULE g_module = nullptr;
 std::filesystem::path g_assetDirectory;
-std::atomic<bool> g_visible{true};
+std::atomic<bool> g_visible{false};
+std::atomic<bool> g_hintVisible{false};
+std::atomic<bool> g_hintDismissRequested{false};
 std::atomic<bool> g_ready{false};
 std::atomic<HWND> g_window{nullptr};
 std::atomic<HWND> g_subclassWindow{nullptr};
@@ -223,6 +225,8 @@ LRESULT CALLBACK WindowSubclass(HWND window, UINT message, WPARAM wParam, LPARAM
     }
     if (message == WM_NCDESTROY) {
         g_visible.store(false, std::memory_order_release);
+        g_hintDismissRequested.store(true, std::memory_order_release);
+        g_hintVisible.store(false, std::memory_order_release);
         UpdateCursorOnWindowThread();
         RemoveWindowSubclass(window, WindowSubclass, kSubclassId);
         g_subclassWindow.store(nullptr, std::memory_order_release);
@@ -836,6 +840,14 @@ HGLRC g_rejectedContext = nullptr;
 bool g_rmlInitialized = false;
 bool g_reflectingControls = false;
 bool g_documentVisible = false;
+bool g_panelVisible = false;
+bool g_centerPanelPending = true;
+bool g_hintElementVisible = false;
+bool g_hintPending = true;
+bool g_hintScheduled = false;
+double g_hintStartedAt = -1.;
+constexpr double kStartupHintDuration = 8.;
+constexpr double kStartupHintFadeDuration = .4;
 std::array<std::vector<Rml::byte>, 5> g_oreFonts;
 std::array<bool, 256> g_heldKeys{};
 std::array<bool, 3> g_heldButtons{};
@@ -1176,6 +1188,54 @@ void ResetUiInput() {
     }
 }
 
+bool UpdateStartupHint(double now, bool panelVisible) {
+    if (panelVisible || g_hintDismissRequested.load(std::memory_order_acquire))
+        g_hintScheduled = false;
+    if (g_hintScheduled && g_hintStartedAt < 0.)
+        // Start after UI initialization, at the first frame that can draw the
+        // hint. UiSystem uses the real QPC, even when the game clock is paused.
+        g_hintStartedAt = now;
+    const bool visible = g_hintScheduled && now - g_hintStartedAt < kStartupHintDuration;
+    if (!visible)
+        g_hintScheduled = false;
+    g_hintVisible.store(visible, std::memory_order_release);
+    return visible;
+}
+
+void SyncDocumentVisibility(bool panelVisible, bool hintVisible) {
+    if (panelVisible != g_panelVisible) {
+        if (!panelVisible)
+            ResetUiInput();
+        if (auto* panel = g_document->GetElementById("panel"))
+            panel->SetProperty("display", panelVisible ? "flex" : "none");
+        g_panelVisible = panelVisible;
+    }
+    if (hintVisible != g_hintElementVisible) {
+        if (auto* hint = g_document->GetElementById("startup-hint"))
+            hint->SetProperty("display", hintVisible ? "block" : "none");
+        g_hintElementVisible = hintVisible;
+    }
+    const bool documentVisible = panelVisible || hintVisible;
+    if (documentVisible != g_documentVisible) {
+        if (documentVisible)
+            g_document->Show(Rml::ModalFlag::None, panelVisible ? Rml::FocusFlag::Auto : Rml::FocusFlag::None);
+        else
+            g_document->Hide();
+        g_documentVisible = documentVisible;
+    }
+}
+
+void ReflectStartupHint(double now) {
+    const double remaining = std::clamp(kStartupHintDuration - (now - g_hintStartedAt), 0., kStartupHintDuration);
+    char width[32]{}, opacity[32]{};
+    std::snprintf(width, sizeof(width), "%.3f%%", remaining / kStartupHintDuration * 100.);
+    std::snprintf(opacity, sizeof(opacity), "%.3f", std::clamp(remaining / kStartupHintFadeDuration, 0., 1.));
+    if (auto* progress = g_document->GetElementById("startup-hint-progress"))
+        progress->SetProperty("width", width);
+    if (auto* hint = g_document->GetElementById("startup-hint"))
+        hint->SetProperty("opacity", opacity);
+}
+
 void DrainInput() {
     std::array<InputEvent, kInputCapacity> events{};
     std::size_t count = 0;
@@ -1282,6 +1342,12 @@ void ShutdownUiOnRenderThread() {
     g_context = nullptr;
     g_document = nullptr;
     g_documentVisible = false;
+    g_panelVisible = false;
+    g_centerPanelPending = true;
+    g_hintElementVisible = false;
+    g_hintScheduled = false;
+    g_hintStartedAt = -1.;
+    g_hintVisible.store(false, std::memory_order_release);
     g_renderer.reset();
     // Initialization can fail while constructing shaders, before Rml::Initialise
     // was called. Clear the registered interfaces in that case as well.
@@ -1357,7 +1423,15 @@ bool InitializeUiOnRenderThread(HWND window, HGLRC context, int width, int heigh
     g_document->AddEventListener("dragend", &g_events);
     InitializeHistoryBars();
     ReflectControls();
+    g_centerPanelPending = true;
     g_statusUpdate = 0.;
+    // Failed initialization never consumes the startup hint. Once scheduled,
+    // it is not armed again by hide, Esc, or a subsequent UI initialization.
+    if (g_hintPending) {
+        g_hintPending = false;
+        g_hintScheduled = !UiVisible() && !g_hintDismissRequested.load(std::memory_order_acquire);
+        g_hintStartedAt = -1.;
+    }
     g_ready.store(true, std::memory_order_release);
     {
         std::lock_guard lock(g_errorMutex);
@@ -1391,16 +1465,16 @@ void DrawOverlay(HDC device) {
     EnsureWindowSubclass(root);
     if (current == g_rejectedContext)
         return;
-    if (current == g_contextOwner && g_ready.load(std::memory_order_acquire) && !UiVisible()) {
+    const bool initiallyVisible = UiVisible();
+    if (current == g_contextOwner && g_ready.load(std::memory_order_acquire) && !initiallyVisible &&
+        !UpdateStartupHint(g_system->GetElapsedTime(), initiallyVisible)) {
         // Keep real telemetry while hidden without creating any GL work.
         ObserveSpeed(g_system->GetElapsedTime(), Status());
         // Hide can release compiled GPU geometry. Preserve the game's object
         // bindings during that transition, then skip all GL work while hidden.
-        if (g_documentVisible) {
+        if (g_documentVisible || g_panelVisible || g_hintElementVisible) {
             GlStateGuard state(g_gl);
-            ResetUiInput();
-            g_document->Hide();
-            g_documentVisible = false;
+            SyncDocumentVisibility(false, false);
         }
         DrainInput();
         return;
@@ -1410,6 +1484,7 @@ void DrawOverlay(HDC device) {
         // release them in an unrelated context where names can refer to game
         // resources. The original context may still resume its swap callbacks.
         g_ready.store(false, std::memory_order_release);
+        g_hintVisible.store(false, std::memory_order_release);
         RequestCursorUpdate();
         g_rejectedContext = current;
         ReportError("The game's OpenGL context changed; overlay resources belong to the previous context.");
@@ -1439,18 +1514,15 @@ void DrawOverlay(HDC device) {
     if (const auto getDpi = reinterpret_cast<UINT(WINAPI*)(HWND)>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow")))
         g_context->SetDensityIndependentPixelRatio(static_cast<float>(getDpi(window)) / 96.f);
     const bool visible = UiVisible();
-    if (visible != g_documentVisible) {
-        if (visible) g_document->Show();
-        else { ResetUiInput(); g_document->Hide(); }
-        g_documentVisible = visible;
-    }
-    DrainInput();
-    if (!visible)
-        return;
     const double now = g_system->GetElapsedTime();
+    const bool hintVisible = UpdateStartupHint(now, visible);
+    SyncDocumentVisibility(visible, hintVisible);
+    DrainInput();
+    if (!visible && !hintVisible)
+        return;
     const auto status = Status();
     ObserveSpeed(now, status);
-    if (now >= g_statusUpdate) {
+    if (visible && now >= g_statusUpdate) {
         if (auto* currentSpeed = g_document->GetElementById("current-speed"))
             currentSpeed->SetInnerRML(FormatSpeed(status.speed));
         if (auto* clock = g_document->GetElementById("clock-status"))
@@ -1460,10 +1532,27 @@ void DrawOverlay(HDC device) {
         ReflectControls();
         g_statusUpdate = now + .2;
     }
-    ReflectHistory();
+    if (visible)
+        ReflectHistory();
+    if (hintVisible)
+        ReflectStartupHint(now);
     g_context->Update();
-    if (KeepPanelInViewport())
-        g_context->Update();
+    if (visible) {
+        if (g_centerPanelPending) {
+            // Measure the laid-out panel in physical pixels, then center it
+            // before its first render. Later opens preserve the dragged spot.
+            if (auto* panel = g_document->GetElementById("panel")) {
+                const auto viewport = g_context->GetDimensions();
+                const auto size = panel->GetBox().GetSize(Rml::BoxArea::Border);
+                PositionPanel({(static_cast<float>(viewport.x) - size.x) * .5f,
+                    (static_cast<float>(viewport.y) - size.y) * .5f});
+                g_centerPanelPending = false;
+                g_context->Update();
+            }
+        } else if (KeepPanelInViewport()) {
+            g_context->Update();
+        }
+    }
     g_renderer->SetViewport(rectangle.right, rectangle.bottom);
     g_renderer->BeginFrame();
     g_context->Render();
@@ -1479,12 +1568,14 @@ BOOL SwapWithOverlay(HDC device, SwapFunction original) {
         catch (const std::exception& error) {
             ReportError(std::string("Rendering disabled after exception: ") + error.what());
             g_ready.store(false, std::memory_order_release);
+            g_hintVisible.store(false, std::memory_order_release);
             g_rejectedContext = wglGetCurrentContext();
             RequestCursorUpdate();
         }
         catch (...) {
             ReportError("Rendering disabled after an unexpected C++ exception.");
             g_ready.store(false, std::memory_order_release);
+            g_hintVisible.store(false, std::memory_order_release);
             g_rejectedContext = wglGetCurrentContext();
             RequestCursorUpdate();
         }
@@ -1563,16 +1654,27 @@ bool InitializeOverlay(HMODULE self, std::string& error) {
 }
 
 void SetUiVisible(bool visible) {
-    g_visible.store(visible, std::memory_order_release);
-    if (!visible) ResetQueuedInput();
+    if (visible) {
+        g_hintDismissRequested.store(true, std::memory_order_release);
+        g_hintVisible.store(false, std::memory_order_release);
+    }
+    const bool wasVisible = g_visible.exchange(visible, std::memory_order_acq_rel);
+    if (!visible && wasVisible) ResetQueuedInput();
     RequestCursorUpdate();
 }
 
 bool UiVisible() { return g_visible.load(std::memory_order_acquire); }
+bool StartupHintVisible() {
+    return g_hintVisible.load(std::memory_order_acquire) && !g_hintDismissRequested.load(std::memory_order_acquire);
+}
 bool OverlayReady() { return g_ready.load(std::memory_order_acquire); }
 std::string OverlayError() {
     std::lock_guard lock(g_errorMutex);
     return g_overlayError;
 }
-void DeactivateOverlay() { SetUiVisible(false); }
+void DeactivateOverlay() {
+    g_hintDismissRequested.store(true, std::memory_order_release);
+    g_hintVisible.store(false, std::memory_order_release);
+    SetUiVisible(false);
+}
 } // namespace gamespeed::runtime

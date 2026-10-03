@@ -311,7 +311,7 @@ void CheckConfig(const Library& library) {
         {"null", true},
         {"{}", true},
         {R"({"autoInject":false,"initialSpeed":0,"showUi":true})", true},
-        {R"({"initialSpeed":0.01})", true},
+        {R"({"initialSpeed":0.01,"showUi":false})", true},
         {R"({"initialSpeed":16})", true},
         {R"({"initialSpeed":0.005})", false},
         {R"({"initialSpeed":17})", false},

@@ -118,7 +118,7 @@ public:
                 }
             }
             autoInject_ = ReadBool(config, "autoInject", true);
-            showUi_ = ReadBool(config, "showUi", true);
+            showUi_ = ReadBool(config, "showUi", false);
             if (const auto value = config.find("initialSpeed"); value != config.end()) {
                 if (!value->is_number()) {
                     throw mcdk::Error(MCDK_ERR_INVALID_ARGUMENT, "initialSpeed must be a number.");
@@ -300,7 +300,9 @@ private:
     std::filesystem::path hookDll_;
     std::uint32_t pid_ = 0;
     bool autoInject_ = true;
-    bool showUi_ = true;
+    // The injected overlay presents its temporary shortcut hint on startup.
+    // Opening the full panel immediately remains an explicit opt-in.
+    bool showUi_ = false;
     double initialSpeed_ = 1.0;
     bool injecting_ = false;
     bool injected_ = false;

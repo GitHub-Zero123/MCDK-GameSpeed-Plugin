@@ -7,7 +7,7 @@
       "config": {
         "autoInject": true,
         "initialSpeed": 1.0,
-        "showUi": true
+        "showUi": false
       }
     }
   ]

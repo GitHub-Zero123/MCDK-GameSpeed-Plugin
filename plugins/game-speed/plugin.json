@@ -3,7 +3,7 @@
   "id": "com.github-zero123.game-speed",
   "name": "Game Speed",
   "version": "0.1.0",
-  "description": "Inject a continuous high-resolution game clock and an in-game RmlUi speed control panel into the current MCDevTool game session.",
+  "description": "Inject a continuous high-resolution game clock and an OreUI speed panel. Entry shows a temporary shortcut hint; press F8 or Ctrl+Shift+G to open the panel.",
   "abi": {
     "major": 1,
     "minor": 0
@@ -40,7 +40,8 @@
       },
       "showUi": {
         "type": "boolean",
-        "default": true
+        "default": false,
+        "description": "Open the full control panel immediately after injection. By default the panel stays closed and an OreUI shortcut hint appears briefly."
       }
     }
   }

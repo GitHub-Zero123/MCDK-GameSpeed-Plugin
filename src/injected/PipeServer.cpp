@@ -36,6 +36,7 @@ std::string Snapshot(bool clockReady, const std::string& warning) {
         << ",\"realCounter\":" << state.realCounter << ",\"frequency\":" << CounterFrequency()
         << ",\"overlayReady\":" << (OverlayReady() ? "true" : "false")
         << ",\"uiVisible\":" << (UiVisible() ? "true" : "false")
+        << ",\"startupHintVisible\":" << (StartupHintVisible() ? "true" : "false")
         << ",\"overlayError\":\"" << Escape(OverlayError()) << "\""
         << ",\"" << (clockReady ? "warning" : "error") << "\":\"" << Escape(warning) << "\"}";
     return response.str();

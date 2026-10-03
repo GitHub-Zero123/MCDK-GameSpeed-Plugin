@@ -36,13 +36,33 @@
         button, input, #panel, #readout, .history-card, #numeric-wrap { box-sizing: border-box; }
         #panel {
             position: absolute; left: 20dp; top: 20dp; width: 580dp; max-width: 94%;
-            display: flex; flex-direction: column; max-height: 92%; overflow: hidden;
+            display: none; flex-direction: column; max-height: 92%; overflow: hidden;
             border: 2dp #1e1e1f; border-top: 4dp #6b6c6d;
             background-color: #313233; box-shadow: #00000099 0dp 8dp 0dp 0dp;
             animation: panel-arrive 0.16s cubic-out;
         }
         #panel.paused { border-top-color: #b1b2b5; }
         #panel.dragging { border-top-color: #ffffff; }
+        #startup-hint {
+            position: absolute; right: 20dp; top: 20dp; width: 340dp; max-width: 90%;
+            display: none; box-sizing: border-box; padding: 16dp; pointer-events: none;
+            border: 2dp #1e1e1f; border-top: 4dp #6b6c6d; background-color: #313233;
+            box-shadow: #00000099 0dp 6dp 0dp 0dp;
+        }
+        #startup-hint * { pointer-events: none; }
+        #startup-hint-header { display: flex; align-items: center; gap: 12dp; margin-bottom: 12dp; }
+        #startup-hint-icon {
+            width: 36dp; height: 40dp; box-sizing: border-box; border: 4dp #00000000; border-bottom-width: 8dp;
+            font-family: Ore Ten; font-size: 16dp; line-height: 28dp; text-align: center;
+            decorator: ninepatch(ore-primary, ore-primary-inner, 4dp 4dp 8dp 4dp) border-box;
+        }
+        #startup-hint-title { font-family: Ore Ten; font-size: 18dp; line-height: 24dp; }
+        #startup-hint-subtitle { font-family: Ore Seven; font-size: 10dp; line-height: 14dp; color: #a0e081; }
+        .startup-hint-step { display: flex; flex-wrap: wrap; align-items: center; gap: 4dp; font-size: 12dp; line-height: 24dp; }
+        #startup-hint .key { font-size: 10dp; }
+        .startup-hint-note { color: #b1b2b5; }
+        #startup-hint-track { margin-top: 12dp; height: 4dp; background-color: #242425; }
+        #startup-hint-progress { width: 100%; height: 4dp; background-color: #52a535; }
         @keyframes panel-arrive {
             from { opacity: 0; transform: translateY(8dp); }
             to { opacity: 1; transform: translateY(0dp); }
@@ -160,13 +180,19 @@
             box-shadow: #ffffff33 0dp 2dp 0dp 0dp inset, #ffffff19 2dp 0dp 0dp 0dp inset, #00000026 0dp -2dp 0dp 0dp inset;
         }
         #speed-slider sliderbar {
-            width: 32dp; height: 32dp; margin-left: 2dp; margin-right: -2dp; margin-top: 8dp;
+            width: 32dp; height: 32dp; margin-left: 0dp; margin-right: 0dp; margin-top: 8dp;
             border: 2dp #1e1e1f; background-color: #d0d1d4; cursor: pointer; decorator: none;
-            box-shadow: #58585a 0dp -4dp 0dp 0dp inset;
+            /* Resolve the original 60%/40% white reflection against the face,
+               so overlapping square strips do not brighten the corners twice. */
+            box-shadow: #58585a 0dp -4dp 0dp 0dp inset, #ecedee 0dp 2dp 0dp 0dp inset, #ecedee 2dp 0dp 0dp 0dp inset, #e3e3e5 -2dp 0dp 0dp 0dp inset, #e3e3e5 0dp -6dp 0dp 0dp inset;
         }
-        #speed-slider sliderbar:hover, #speed-slider sliderbar:active, #speed-slider:active sliderbar { background-color: #b1b2b5; }
+        #speed-slider sliderbar:hover, #speed-slider sliderbar:active, #speed-slider:active sliderbar {
+            background-color: #b1b2b5;
+            box-shadow: #58585a 0dp -4dp 0dp 0dp inset, #eff0f0 0dp 2dp 0dp 0dp inset, #eff0f0 2dp 0dp 0dp 0dp inset, #e0e0e1 -2dp 0dp 0dp 0dp inset, #e0e0e1 0dp -6dp 0dp 0dp inset;
+        }
         #speed-slider:focus-visible { box-shadow: none; }
-        #speed-slider:focus-visible sliderbar { box-shadow: #58585a 0dp -4dp 0dp 0dp inset, #242425 0dp 0dp 0dp 2dp, #ffffff 0dp 0dp 0dp 4dp; }
+        #speed-slider:focus-visible sliderbar { box-shadow: #58585a 0dp -4dp 0dp 0dp inset, #ecedee 0dp 2dp 0dp 0dp inset, #ecedee 2dp 0dp 0dp 0dp inset, #e3e3e5 -2dp 0dp 0dp 0dp inset, #e3e3e5 0dp -6dp 0dp 0dp inset, #242425 0dp 0dp 0dp 2dp, #ffffff 0dp 0dp 0dp 4dp; }
+        #speed-slider:focus-visible sliderbar:hover, #speed-slider:focus-visible sliderbar:active, #speed-slider:focus-visible:active sliderbar { box-shadow: #58585a 0dp -4dp 0dp 0dp inset, #eff0f0 0dp 2dp 0dp 0dp inset, #eff0f0 2dp 0dp 0dp 0dp inset, #e0e0e1 -2dp 0dp 0dp 0dp inset, #e0e0e1 0dp -6dp 0dp 0dp inset, #242425 0dp 0dp 0dp 2dp, #ffffff 0dp 0dp 0dp 4dp; }
         #speed-slider.paused sliderprogress { background-color: #6b6c6d; }
         #speed-slider sliderarrowdec, #speed-slider sliderarrowinc { display: none; }
         #slider-ticks { position: absolute; left: 18dp; right: 18dp; top: 42dp; height: 6dp; pointer-events: none; }
@@ -214,6 +240,16 @@
     </style>
 </head>
 <body>
+    <div id="startup-hint">
+        <div id="startup-hint-header">
+            <div id="startup-hint-icon">GS</div>
+            <div><div id="startup-hint-title">游戏变速已就绪</div><div id="startup-hint-subtitle">GAME SPEED</div></div>
+        </div>
+        <div class="startup-hint-step"><span>按</span><span class="key">F8</span><span>或</span><span class="key">Ctrl+Shift+G</span><span>打开面板</span></div>
+        <div class="startup-hint-step startup-hint-note"><span>笔记本可用</span><span class="key">Fn+F8</span></div>
+        <div class="startup-hint-step startup-hint-note"><span class="key">Esc</span><span>收起面板</span></div>
+        <div id="startup-hint-track"><div id="startup-hint-progress"></div></div>
+    </div>
     <div id="panel">
         <div id="drag-handle">
             <div id="monogram">GS</div>

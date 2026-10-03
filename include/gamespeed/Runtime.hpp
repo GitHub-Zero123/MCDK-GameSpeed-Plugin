@@ -34,6 +34,7 @@ std::int64_t CounterFrequency();
 bool InitializeOverlay(HMODULE self, std::string& error);
 void SetUiVisible(bool visible);
 bool UiVisible();
+bool StartupHintVisible();
 bool OverlayReady();
 std::string OverlayError();
 // Stop UI work and return the clock to continuous 1x. DLL stays resident.

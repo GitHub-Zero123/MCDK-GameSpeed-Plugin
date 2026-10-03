@@ -48,11 +48,11 @@ ctest --preset core
   "enable": true,
   "id": "com.github-zero123.game-speed",
   "path": "D:/Zero123/CPP/CMAKE/MCDK-GameSpeed-Plugin/build/windows-x64-gl32/plugins/game-speed/Release",
-  "config": { "autoInject": true, "initialSpeed": 1.0, "showUi": true }
+  "config": { "autoInject": true, "initialSpeed": 1.0, "showUi": false }
 }
 ```
 
-宿主配置支持 `autoInject`、`initialSpeed`、`showUi`。启动后通过游戏内 RmlUi 面板操作；本项目的 MCP 服务配置关闭。
+宿主配置支持 `autoInject`、`initialSpeed`、`showUi`。`showUi` 默认 `false`：首次 IPC 连接后完成注入，仅显示 Ore UI 浮动快捷键教程，8 秒后自动消失；按 `F8` 或 `Ctrl+Shift+G` 打开面板。提示自身使用真实计时，即使游戏时间暂停也会消失，且不会捕获游戏输入。显式设置 `showUi:true` 可进入后直接打开面板。本项目的 MCP 服务配置关闭。
 
 自动注入使用游戏调试 IPC 的首次有效连接作为就绪信号，需要启用 `include_debug_mod`。插件处理连接先于 runtime 的情况，也检查当前 IPC 连接快照；同一游戏进程只发起一次注入，重复连接不会重复加载 DLL。首次进入世界前，宿主会显示等待 IPC 的提示。
 
@@ -74,13 +74,13 @@ $hookDll = (Resolve-Path './build/windows-x64-gl32/plugins/game-speed/Release/ga
 & $controller shutdown 12345
 ```
 
-`status` 返回计时倍率、Hook 命中次数 `scaledCalls`、`overlayReady` 和 `overlayError`。`inject` 重用已经加载的同一 DLL，避免重复创建 Hook。
+`status` 返回计时倍率、Hook 命中次数 `scaledCalls`、`overlayReady`、`overlayError` 和 `startupHintVisible`。`inject` 重用已经加载的同一 DLL，避免重复创建 Hook。
 
 倍率为 `0.01～16`，`0` 表示暂停；`resume` 恢复暂停前倍率。`F8` 或 `Ctrl+Shift+G` 显示/隐藏操作面板；若笔记本 F8 控制系统功能，可按 `Fn+F8`，或直接使用 `Ctrl+Shift+G`。旧的 `Insert` 快捷键仍有效。面板提供预设倍率、滑块、数值输入、暂停和恢复 1 倍；打开时还可用 `Pause`、`Home`、`+/-`。UI 自身使用真实 QPC 时间，因此暂停游戏计时后仍能操作。
 
 界面采用用户提供的 Ore UI 组件库风格：原版绿色主按钮、浅灰次按钮、方角像素边框、按下下沉效果及 Minecraft Seven/Ten 字体。按钮直接使用 `D:/Zero123/.Temps/MCTest/oreui-unpacked/test/hbui` 的原始默认、悬停、按下及焦点贴图，按原图九宫格切片渲染，保留深色外框、像素高光和下沿；使用最近邻采样避免边缘模糊。颜色、间距和字体适配为 RmlUi RCSS；字体及按钮资源随插件包提供，来源和原始文件校验见 `assets/oreui/provenance.json`。
 
-标题栏可拖动，鼠标离开游戏窗口后松开也能结束拖动。倍率轨迹记录最近 12 秒的真实倍率，包含暂停状态及当前倍率持续时间。小窗口下内容可滚动，标题和快捷键栏保持可见。`Esc` 只隐藏面板，再按 `F8` 或 `Ctrl+Shift+G` 可重新打开。
+主面板首次打开在游戏窗口内居中，标题栏可拖动，鼠标离开游戏窗口后松开也能结束拖动；后续打开保留调整的位置，窗口缩小时限制在可见范围。倍率轨迹记录最近 12 秒的真实倍率，包含暂停状态及当前倍率持续时间。小窗口下内容可滚动，标题和快捷键栏保持可见。`Esc` 只隐藏面板，再按 `F8` 或 `Ctrl+Shift+G` 可重新打开。
 
 滑块按原版 BaseSlider 的灰色轨道、绿色进度和 32×32 方形手柄绘制，保留悬停、拖动及键盘焦点反馈。刻度采用两段对数映射：左半段为 0.01～1 倍，右半段为 1～16 倍，1 倍位于正中；标尺为 0.01 / 0.1 / 1 / 4 / 16 倍。拖动实时更新倍率并保留两位小数，暂停时显示恢复倍率；拖动期间状态刷新不会抢回手柄位置。
 

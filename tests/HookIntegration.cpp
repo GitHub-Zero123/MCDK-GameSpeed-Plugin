@@ -249,7 +249,8 @@ struct GameGlState {
 void SavePreview(int width, int height, const std::vector<unsigned char>& pixels, LONG variant, bool compact) {
     std::array<wchar_t, 32768> self{};
     GetModuleFileNameW(nullptr, self.data(), static_cast<DWORD>(self.size()));
-    const wchar_t* filename = compact ? L"overlay-compact-preview.bmp" : variant == 4 ? L"overlay-overview-preview.bmp" :
+    const wchar_t* filename = variant == 5 ? (compact ? L"overlay-startup-hint-compact-preview.bmp" : L"overlay-startup-hint-preview.bmp") :
+        compact ? L"overlay-compact-preview.bmp" : variant == 4 ? L"overlay-overview-preview.bmp" :
         variant == 2 ? L"overlay-paused-preview.bmp" : variant == 3 ? L"overlay-fast-preview.bmp" : L"overlay-preview.bmp";
     const auto path = std::filesystem::path(self.data()).parent_path() / filename;
     const auto rowBytes = static_cast<std::uint32_t>((width * 3 + 3) & ~3);
@@ -540,8 +541,38 @@ int wmain(int argc, wchar_t** argv) {
         }
         Require(status.find("\"overlayReady\":true") != std::string::npos, "RmlUi initialization failed: " + status);
         Require(Number(status, "scaledCalls") > 0, "Main executable QPC calls were not hooked");
+        Require(status.find("\"uiVisible\":false") != std::string::npos,
+            "Injection opened the control panel instead of the startup hint");
+        Sleep(350);
+        Require(Command(child.dwProcessId, "status").find("\"startupHintVisible\":true") != std::string::npos,
+            "The startup shortcut hint did not appear while the panel was hidden");
+        Require(InterlockedCompareExchange64(&shared->pixelHash, 0, 0) != baseline,
+            "The startup shortcut hint did not render");
+        InterlockedExchange(&shared->captureRequest, 5);
+        Sleep(120);
+        if (!compact) {
+            // The tutorial must expire on real time even when game QPC is frozen.
+            const auto pausedHint = Command(child.dwProcessId, "pause");
+            const ULONGLONG hintDeadline = GetTickCount64() + 10000;
+            while (Command(child.dwProcessId, "status").find("\"startupHintVisible\":true") != std::string::npos &&
+                GetTickCount64() < hintDeadline)
+                Sleep(50);
+            status = Command(child.dwProcessId, "status");
+            Require(status.find("\"startupHintVisible\":false") != std::string::npos,
+                "The startup hint did not expire while the game clock was paused");
+            Require(status.find("\"uiVisible\":false") != std::string::npos,
+                "Hint expiry opened the control panel");
+            Require(Number(status, "virtualCounter") == Number(pausedHint, "virtualCounter"),
+                "The tutorial countdown advanced the paused game clock");
+            Sleep(120);
+            Require(InterlockedCompareExchange64(&shared->pixelHash, 0, 0) == baseline,
+                "The startup hint left visible UI after its deadline");
+            Command(child.dwProcessId, "resume");
+        }
         Command(child.dwProcessId, "show");
         Sleep(450);
+        Require(Command(child.dwProcessId, "status").find("\"startupHintVisible\":false") != std::string::npos,
+            "Opening the panel did not dismiss the startup hint");
         Require(InterlockedCompareExchange64(&shared->pixelHash, 0, 0) != baseline, "RmlUi did not change the OpenGL framebuffer");
         InterlockedExchange(&shared->captureRequest, 1);
         Sleep(100);
@@ -558,6 +589,8 @@ int wmain(int argc, wchar_t** argv) {
             Sleep(100);
             Require(Command(child.dwProcessId, "status").find("\"uiVisible\":false") != std::string::npos,
                 "Escape did not close the overlay");
+            Require(Command(child.dwProcessId, "status").find("\"startupHintVisible\":false") != std::string::npos,
+                "Closing the panel replayed the startup hint");
             Require(PostMessageW(window, WM_KEYDOWN, VK_F8, 1) != FALSE, "Cannot deliver F8 after Escape");
             PostMessageW(window, WM_KEYUP, VK_F8, (LPARAM(1) << 31) | 1);
             Sleep(100);
