@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "com.github-zero123.game-speed",
+  "name": "Game Speed",
+  "version": "0.1.0",
+  "description": "Inject a continuous high-resolution game clock and an in-game RmlUi speed control panel into the current MCDevTool game session.",
+  "abi": {
+    "major": 1,
+    "minor": 0
+  },
+  "entry_symbol": "mcdk_plugin_entry",
+  "min_stage": "register",
+  "libraries": {
+    "windows.x86_64": "game_speed_plugin.dll"
+  },
+  "permissions": [
+    "game.execute_code"
+  ],
+  "config_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "autoInject": {
+        "type": "boolean",
+        "default": true
+      },
+      "initialSpeed": {
+        "type": "number",
+        "anyOf": [
+          {
+            "const": 0
+          },
+          {
+            "minimum": 0.01,
+            "maximum": 16
+          }
+        ],
+        "default": 1
+      },
+      "showUi": {
+        "type": "boolean",
+        "default": true
+      }
+    }
+  }
+}

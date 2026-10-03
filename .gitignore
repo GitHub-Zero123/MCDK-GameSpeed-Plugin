@@ -1,0 +1,38 @@
+# Build trees and release staging (rooted to preserve source directories).
+/build/
+/builds/
+/out/
+/dist/
+/cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
+
+# IDE and Windows build intermediates.
+/.vs/
+/.idea/
+/.vscode/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+*.pch
+*.tlog
+*.dll
+*.exe
+*.lib
+*.a
+*.exp
+
+# Machine-specific MCDevTool settings and runtime diagnostics.
+/.mcdev.json
+*.log
+*.dmp
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db

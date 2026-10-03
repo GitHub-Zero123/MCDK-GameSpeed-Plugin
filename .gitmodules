@@ -1,0 +1,12 @@
+[submodule "external/RmlUi"]
+	path = external/RmlUi
+	url = https://github.com/mikke89/RmlUi.git
+[submodule "external/minhook"]
+	path = external/minhook
+	url = https://github.com/TsudaKageyu/minhook.git
+[submodule "external/freetype"]
+	path = external/freetype
+	url = https://github.com/freetype/freetype.git
+[submodule "external/MCDevTool"]
+	path = external/MCDevTool
+	url = https://github.com/GitHub-Zero123/MCDevTool.git

@@ -1,0 +1,14 @@
+{
+  "plugins": [
+    {
+      "enable": true,
+      "id": "com.github-zero123.game-speed",
+      "path": "./build/windows-x64-gl32/plugins/game-speed/Release",
+      "config": {
+        "autoInject": true,
+        "initialSpeed": 1.0,
+        "showUi": true
+      }
+    }
+  ]
+}

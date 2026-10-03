@@ -1,0 +1,646 @@
+#include <gamespeed/Client.hpp>
+#include <windows.h>
+#include <gl/GL.h>
+#include <array>
+#include <charconv>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <iostream>
+#include <fstream>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace {
+struct SharedState {
+    volatile LONG quit = 0;
+    volatile LONG regressions = 0;
+    volatile LONG stateFailures = 0;
+    volatile LONG frames = 0;
+    alignas(8) volatile LONG64 pixelHash = 0;
+    alignas(8) volatile LONG64 lastQpc = 0;
+    alignas(8) volatile LONG64 lastChrono = 0;
+    volatile LONG readbackError = 0;
+    volatile LONG swapError = 0;
+    volatile LONG captureRequest = 0;
+    volatile LONG initializationError = 0;
+    volatile LONG contextMajor = 0;
+    volatile LONG contextMinor = 0;
+    volatile LONG contextProfile = 0;
+    volatile LONG stateFailureMask = 0;
+    volatile LONG windowThread = 0;
+    volatile LONG renderThread = 0;
+    alignas(8) volatile LONG64 window = 0;
+};
+constexpr int Width = 640, Height = 480;
+
+// Windows' OpenGL header exposes only 1.1. Load just the modern entry points
+// used by this test, independently of the DLL's renderer and GL loader.
+constexpr GLenum GlMajorVersion = 0x821B, GlMinorVersion = 0x821C;
+constexpr GLenum GlContextProfileMask = 0x9126;
+constexpr GLint GlCoreProfileBit = 0x00000001;
+constexpr GLenum GlArrayBuffer = 0x8892, GlElementArrayBuffer = 0x8893;
+constexpr GLenum GlArrayBufferBinding = 0x8894, GlElementArrayBufferBinding = 0x8895;
+constexpr GLenum GlStaticDraw = 0x88E4, GlVertexArrayBinding = 0x85B5;
+constexpr GLenum GlVertexShader = 0x8B31, GlFragmentShader = 0x8B30;
+constexpr GLenum GlCompileStatus = 0x8B81, GlLinkStatus = 0x8B82, GlInfoLogLength = 0x8B84;
+constexpr GLenum GlCurrentProgram = 0x8B8D, GlActiveTexture = 0x84E0, GlTexture0 = 0x84C0;
+constexpr GLenum GlFramebuffer = 0x8D40, GlReadFramebuffer = 0x8CA8, GlDrawFramebuffer = 0x8CA9;
+constexpr GLenum GlReadFramebufferBinding = 0x8CAA, GlDrawFramebufferBinding = 0x8CA6;
+constexpr GLenum GlColorAttachment0 = 0x8CE0, GlFramebufferComplete = 0x8CD5;
+constexpr GLenum GlBlendSrcRgb = 0x80C9, GlBlendDstRgb = 0x80C8;
+constexpr GLenum GlBlendSrcAlpha = 0x80CB, GlBlendDstAlpha = 0x80CA;
+constexpr GLenum GlBlendEquationRgb = 0x8009, GlBlendEquationAlpha = 0x883D;
+constexpr GLenum GlFuncAdd = 0x8006, GlFuncReverseSubtract = 0x800B;
+
+template<typename Function>
+Function LoadGl(const char* name) {
+    const auto address = wglGetProcAddress(name);
+    const auto value = reinterpret_cast<std::uintptr_t>(address);
+    if (!address || value <= 3 || value == ~std::uintptr_t{0})
+        throw std::runtime_error(std::string("Missing OpenGL entry point: ") + name);
+    return reinterpret_cast<Function>(address);
+}
+
+struct CoreGl {
+    using GenObjects = void(APIENTRY*)(GLsizei, GLuint*);
+    using DeleteObjects = void(APIENTRY*)(GLsizei, const GLuint*);
+    using BindObject = void(APIENTRY*)(GLuint);
+    using BindTarget = void(APIENTRY*)(GLenum, GLuint);
+    using BufferData = void(APIENTRY*)(GLenum, std::ptrdiff_t, const void*, GLenum);
+    using ShaderSource = void(APIENTRY*)(GLuint, GLsizei, const char* const*, const GLint*);
+    using CreateShader = GLuint(APIENTRY*)(GLenum);
+    using CreateProgram = GLuint(APIENTRY*)();
+    using GetObject = void(APIENTRY*)(GLuint, GLenum, GLint*);
+    using ObjectLog = void(APIENTRY*)(GLuint, GLsizei, GLsizei*, char*);
+    using AttachShader = void(APIENTRY*)(GLuint, GLuint);
+    using ActiveTexture = void(APIENTRY*)(GLenum);
+    using FramebufferTexture = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint, GLint);
+    using CheckFramebuffer = GLenum(APIENTRY*)(GLenum);
+    using BlendFuncSeparate = void(APIENTRY*)(GLenum, GLenum, GLenum, GLenum);
+    using BlendEquationSeparate = void(APIENTRY*)(GLenum, GLenum);
+
+    GenObjects genVertexArrays = LoadGl<GenObjects>("glGenVertexArrays");
+    BindObject bindVertexArray = LoadGl<BindObject>("glBindVertexArray");
+    DeleteObjects deleteVertexArrays = LoadGl<DeleteObjects>("glDeleteVertexArrays");
+    GenObjects genBuffers = LoadGl<GenObjects>("glGenBuffers");
+    BindTarget bindBuffer = LoadGl<BindTarget>("glBindBuffer");
+    BufferData bufferData = LoadGl<BufferData>("glBufferData");
+    DeleteObjects deleteBuffers = LoadGl<DeleteObjects>("glDeleteBuffers");
+    CreateShader createShader = LoadGl<CreateShader>("glCreateShader");
+    ShaderSource shaderSource = LoadGl<ShaderSource>("glShaderSource");
+    BindObject compileShader = LoadGl<BindObject>("glCompileShader");
+    GetObject getShader = LoadGl<GetObject>("glGetShaderiv");
+    ObjectLog shaderLog = LoadGl<ObjectLog>("glGetShaderInfoLog");
+    BindObject deleteShader = LoadGl<BindObject>("glDeleteShader");
+    CreateProgram createProgram = LoadGl<CreateProgram>("glCreateProgram");
+    AttachShader attachShader = LoadGl<AttachShader>("glAttachShader");
+    BindObject linkProgram = LoadGl<BindObject>("glLinkProgram");
+    GetObject getProgram = LoadGl<GetObject>("glGetProgramiv");
+    ObjectLog programLog = LoadGl<ObjectLog>("glGetProgramInfoLog");
+    BindObject useProgram = LoadGl<BindObject>("glUseProgram");
+    BindObject deleteProgram = LoadGl<BindObject>("glDeleteProgram");
+    ActiveTexture activeTexture = LoadGl<ActiveTexture>("glActiveTexture");
+    GenObjects genFramebuffers = LoadGl<GenObjects>("glGenFramebuffers");
+    BindTarget bindFramebuffer = LoadGl<BindTarget>("glBindFramebuffer");
+    FramebufferTexture framebufferTexture = LoadGl<FramebufferTexture>("glFramebufferTexture2D");
+    CheckFramebuffer checkFramebuffer = LoadGl<CheckFramebuffer>("glCheckFramebufferStatus");
+    DeleteObjects deleteFramebuffers = LoadGl<DeleteObjects>("glDeleteFramebuffers");
+    BlendFuncSeparate blendFunc = LoadGl<BlendFuncSeparate>("glBlendFuncSeparate");
+    BlendEquationSeparate blendEquation = LoadGl<BlendEquationSeparate>("glBlendEquationSeparate");
+
+    GLuint Shader(GLenum type, const char* source) const {
+        const GLuint shader = createShader(type);
+        shaderSource(shader, 1, &source, nullptr);
+        compileShader(shader);
+        GLint compiled = GL_FALSE;
+        getShader(shader, GlCompileStatus, &compiled);
+        if (compiled != GL_TRUE) {
+            GLint length = 0;
+            getShader(shader, GlInfoLogLength, &length);
+            std::string log(static_cast<std::size_t>(length > 0 ? length : 1), '\0');
+            shaderLog(shader, static_cast<GLsizei>(log.size()), nullptr, log.data());
+            deleteShader(shader);
+            throw std::runtime_error("Core test shader compilation failed: " + log);
+        }
+        return shader;
+    }
+};
+
+struct GameGlState {
+    GLuint program = 0, vertexArray = 0, vertexBuffer = 0, indexBuffer = 0;
+    GLuint framebuffer = 0, texture = 0;
+
+    void Initialize(const CoreGl& gl, int width, int height) {
+        const GLuint vertex = gl.Shader(GlVertexShader,
+            "#version 150 core\nvoid main(){gl_Position=vec4(0.0,0.0,0.0,1.0);}");
+        const GLuint fragment = gl.Shader(GlFragmentShader,
+            "#version 150 core\nout vec4 color;void main(){color=vec4(1.0);}");
+        program = gl.createProgram();
+        gl.attachShader(program, vertex);
+        gl.attachShader(program, fragment);
+        gl.linkProgram(program);
+        gl.deleteShader(vertex);
+        gl.deleteShader(fragment);
+        GLint linked = GL_FALSE;
+        gl.getProgram(program, GlLinkStatus, &linked);
+        if (linked != GL_TRUE) {
+            GLint length = 0;
+            gl.getProgram(program, GlInfoLogLength, &length);
+            std::string log(static_cast<std::size_t>(length > 0 ? length : 1), '\0');
+            gl.programLog(program, static_cast<GLsizei>(log.size()), nullptr, log.data());
+            throw std::runtime_error("Core test program linking failed: " + log);
+        }
+        gl.genVertexArrays(1, &vertexArray);
+        gl.bindVertexArray(vertexArray);
+        gl.genBuffers(1, &vertexBuffer);
+        gl.bindBuffer(GlArrayBuffer, vertexBuffer);
+        constexpr GLfloat vertices[] = {0.0f, 0.0f, 0.0f};
+        gl.bufferData(GlArrayBuffer, sizeof(vertices), vertices, GlStaticDraw);
+        gl.genBuffers(1, &indexBuffer);
+        gl.bindBuffer(GlElementArrayBuffer, indexBuffer);
+        constexpr GLuint index = 0;
+        gl.bufferData(GlElementArrayBuffer, sizeof(index), &index, GlStaticDraw);
+        gl.activeTexture(GlTexture0 + 3);
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        gl.genFramebuffers(1, &framebuffer);
+        gl.bindFramebuffer(GlFramebuffer, framebuffer);
+        gl.framebufferTexture(GlFramebuffer, GlColorAttachment0, GL_TEXTURE_2D, texture, 0);
+        if (gl.checkFramebuffer(GlFramebuffer) != GlFramebufferComplete)
+            throw std::runtime_error("Core test framebuffer is incomplete");
+        gl.bindFramebuffer(GlFramebuffer, 0);
+        if (glGetError() != GL_NO_ERROR)
+            throw std::runtime_error("Core test GL object initialization failed");
+    }
+
+    void Apply(const CoreGl& gl, int width, int height) const {
+        gl.useProgram(program);
+        gl.bindVertexArray(vertexArray);
+        gl.bindBuffer(GlArrayBuffer, vertexBuffer);
+        gl.bindBuffer(GlElementArrayBuffer, indexBuffer);
+        gl.activeTexture(GlTexture0 + 3);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        gl.bindFramebuffer(GlFramebuffer, framebuffer);
+        glViewport(7, 11, width - 24, height - 28);
+        glScissor(13, 17, width / 3, height / 3);
+        glEnable(GL_SCISSOR_TEST);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        glDepthMask(GL_TRUE);
+        glColorMask(GL_FALSE, GL_TRUE, GL_FALSE, GL_TRUE);
+        gl.blendFunc(GL_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA, GL_ONE_MINUS_DST_ALPHA, GL_SRC_ALPHA);
+        gl.blendEquation(GlFuncReverseSubtract, GlFuncAdd);
+    }
+
+    LONG Check(int width, int height) const {
+        LONG failures = 0;
+        auto matches = [](GLenum query, GLint expected) {
+            GLint actual = 0;
+            glGetIntegerv(query, &actual);
+            return actual == expected;
+        };
+        if (!matches(GlCurrentProgram, static_cast<GLint>(program))) failures |= 1;
+        if (!matches(GlVertexArrayBinding, static_cast<GLint>(vertexArray))) failures |= 2;
+        if (!matches(GlArrayBufferBinding, static_cast<GLint>(vertexBuffer)) ||
+            !matches(GlElementArrayBufferBinding, static_cast<GLint>(indexBuffer))) failures |= 4;
+        if (!matches(GlActiveTexture, static_cast<GLint>(GlTexture0 + 3)) ||
+            !matches(GL_TEXTURE_BINDING_2D, static_cast<GLint>(texture))) failures |= 8;
+        if (!matches(GlDrawFramebufferBinding, static_cast<GLint>(framebuffer)) ||
+            !matches(GlReadFramebufferBinding, static_cast<GLint>(framebuffer))) failures |= 16;
+        std::array<GLint, 4> viewport{}, scissor{};
+        glGetIntegerv(GL_VIEWPORT, viewport.data());
+        glGetIntegerv(GL_SCISSOR_BOX, scissor.data());
+        if (viewport != std::array<GLint, 4>{7, 11, width - 24, height - 28} ||
+            scissor != std::array<GLint, 4>{13, 17, width / 3, height / 3}) failures |= 32;
+        GLboolean depthMask = GL_FALSE;
+        std::array<GLboolean, 4> colorMask{};
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+        glGetBooleanv(GL_COLOR_WRITEMASK, colorMask.data());
+        if (!glIsEnabled(GL_DEPTH_TEST) || !glIsEnabled(GL_CULL_FACE) || glIsEnabled(GL_BLEND) ||
+            !glIsEnabled(GL_SCISSOR_TEST) || depthMask != GL_TRUE ||
+            colorMask != std::array<GLboolean, 4>{GL_FALSE, GL_TRUE, GL_FALSE, GL_TRUE}) failures |= 64;
+        if (!matches(GlBlendSrcRgb, GL_DST_COLOR) || !matches(GlBlendDstRgb, GL_ONE_MINUS_SRC_ALPHA) ||
+            !matches(GlBlendSrcAlpha, GL_ONE_MINUS_DST_ALPHA) || !matches(GlBlendDstAlpha, GL_SRC_ALPHA) ||
+            !matches(GlBlendEquationRgb, GlFuncReverseSubtract) || !matches(GlBlendEquationAlpha, GlFuncAdd)) failures |= 128;
+        return failures;
+    }
+
+    void Destroy(const CoreGl& gl) const {
+        gl.useProgram(0);
+        gl.bindFramebuffer(GlFramebuffer, 0);
+        gl.bindVertexArray(0);
+        gl.bindBuffer(GlArrayBuffer, 0);
+        gl.deleteFramebuffers(1, &framebuffer);
+        glDeleteTextures(1, &texture);
+        gl.deleteBuffers(1, &indexBuffer);
+        gl.deleteBuffers(1, &vertexBuffer);
+        gl.deleteVertexArrays(1, &vertexArray);
+        gl.deleteProgram(program);
+    }
+};
+
+void SavePreview(int width, int height, const std::vector<unsigned char>& pixels, LONG variant, bool compact) {
+    std::array<wchar_t, 32768> self{};
+    GetModuleFileNameW(nullptr, self.data(), static_cast<DWORD>(self.size()));
+    const wchar_t* filename = compact ? L"overlay-compact-preview.bmp" : variant == 4 ? L"overlay-overview-preview.bmp" :
+        variant == 2 ? L"overlay-paused-preview.bmp" : variant == 3 ? L"overlay-fast-preview.bmp" : L"overlay-preview.bmp";
+    const auto path = std::filesystem::path(self.data()).parent_path() / filename;
+    const auto rowBytes = static_cast<std::uint32_t>((width * 3 + 3) & ~3);
+    BITMAPFILEHEADER file{};
+    file.bfType = 0x4d42;
+    file.bfOffBits = sizeof(file) + sizeof(BITMAPINFOHEADER);
+    file.bfSize = file.bfOffBits + rowBytes * height;
+    BITMAPINFOHEADER bitmap{};
+    bitmap.biSize = sizeof(bitmap);
+    bitmap.biWidth = width;
+    bitmap.biHeight = height;
+    bitmap.biPlanes = 1;
+    bitmap.biBitCount = 24;
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(&file), sizeof(file));
+    output.write(reinterpret_cast<const char*>(&bitmap), sizeof(bitmap));
+    std::vector<char> row(rowBytes);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const auto offset = static_cast<std::size_t>((y * width + x) * 3);
+            row[x * 3] = static_cast<char>(pixels[offset + 2]);
+            row[x * 3 + 1] = static_cast<char>(pixels[offset + 1]);
+            row[x * 3 + 2] = static_cast<char>(pixels[offset]);
+        }
+        output.write(row.data(), row.size());
+    }
+}
+
+LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_APP + 2) {
+        // SetKeyboardState affects only this isolated HWND owner's input table.
+        // Exercise modifier handling without touching foreground/system input.
+        BYTE keys[256]{};
+        GetKeyboardState(keys);
+        keys[VK_CONTROL] = wparam ? 0x80 : 0;
+        keys[VK_SHIFT] = wparam ? 0x80 : 0;
+        SetKeyboardState(keys);
+        return 0;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+int Child(const wchar_t* mappingName, bool compact) {
+    HANDLE mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, mappingName);
+    if (!mapping) return 2;
+    auto* shared = static_cast<SharedState*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
+    if (!shared) { CloseHandle(mapping); return 3; }
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    WNDCLASSW type{};
+    type.style = CS_OWNDC;
+    type.lpfnWndProc = WindowProc;
+    type.hInstance = instance;
+    type.lpszClassName = L"GameSpeed.Isolated.OpenGL.Test";
+    RegisterClassW(&type);
+    const HWND window = CreateWindowExW(0, type.lpszClassName, L"GameSpeed isolated test", WS_OVERLAPPEDWINDOW,
+        0, 0, (compact ? 420 : Width) + 16, (compact ? 360 : Height) + 39, nullptr, nullptr, instance, nullptr);
+    if (!window) return 4;
+    InterlockedExchange64(&shared->window, reinterpret_cast<LONG64>(window));
+    HDC dc = GetDC(window);
+    PIXELFORMATDESCRIPTOR format{};
+    format.nSize = sizeof(format);
+    format.nVersion = 1;
+    format.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    format.iPixelType = PFD_TYPE_RGBA;
+    format.cColorBits = 32;
+    format.cDepthBits = 24;
+    format.cStencilBits = 8;
+    const auto pixelFormat = ChoosePixelFormat(dc, &format);
+    if (!pixelFormat || !SetPixelFormat(dc, pixelFormat, &format)) return 5;
+    // Bootstrap WGL extension lookup, then discard the legacy context before
+    // testing. The overlay must work in a real desktop OpenGL core context.
+    const HGLRC bootstrap = wglCreateContext(dc);
+    if (!bootstrap || !wglMakeCurrent(dc, bootstrap)) return 6;
+    using CreateContext = HGLRC(WINAPI*)(HDC, HGLRC, const int*);
+    HGLRC context = nullptr;
+    try {
+        const auto createContext = LoadGl<CreateContext>("wglCreateContextAttribsARB");
+        constexpr int attributes[] = {
+            0x2091, 3, // WGL_CONTEXT_MAJOR_VERSION_ARB
+            0x2092, 2, // WGL_CONTEXT_MINOR_VERSION_ARB
+            0x9126, 1, // WGL_CONTEXT_PROFILE_MASK_ARB, CORE_PROFILE_BIT_ARB
+            0
+        };
+        context = createContext(dc, nullptr, attributes);
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+    }
+    wglMakeCurrent(nullptr, nullptr);
+    wglDeleteContext(bootstrap);
+    if (!context) return 7;
+    // Keep the test window hidden and leave the user's game and focus alone.
+    // Window messages and rendering run on different threads as in the game.
+    InterlockedExchange(&shared->windowThread, static_cast<LONG>(GetCurrentThreadId()));
+    RECT client{};
+    GetClientRect(window, &client);
+    const int width = client.right, height = client.bottom;
+    std::vector<unsigned char> pixels(static_cast<std::size_t>(width * height * 3));
+    // Exercise the separately filtered MSVC steady_clock wrapper when present.
+    const HMODULE standardLibrary = LoadLibraryW(L"msvcp140.dll");
+    using PerfCounter = std::int64_t(__cdecl*)();
+    const auto chronoCounter = standardLibrary ? reinterpret_cast<PerfCounter>(GetProcAddress(standardLibrary, "_Query_perf_counter")) : nullptr;
+    std::thread renderThread([&] {
+      InterlockedExchange(&shared->renderThread, static_cast<LONG>(GetCurrentThreadId()));
+      if (!wglMakeCurrent(dc, context)) {
+        InterlockedExchange(&shared->initializationError, 1);
+        return;
+      }
+      try {
+      GLint major = 0, minor = 0, profile = 0;
+      glGetIntegerv(GlMajorVersion, &major);
+      glGetIntegerv(GlMinorVersion, &minor);
+      glGetIntegerv(GlContextProfileMask, &profile);
+      InterlockedExchange(&shared->contextMajor, major);
+      InterlockedExchange(&shared->contextMinor, minor);
+      InterlockedExchange(&shared->contextProfile, profile);
+      if (major != 3 || minor != 2 || (profile & GlCoreProfileBit) == 0)
+        throw std::runtime_error("WGL did not create the requested OpenGL 3.2 core context");
+      const CoreGl gl;
+      GameGlState gameState;
+      gameState.Initialize(gl, width, height);
+      LARGE_INTEGER before{};
+      QueryPerformanceCounter(&before);
+      while (!InterlockedCompareExchange(&shared->quit, 0, 0)) {
+        LARGE_INTEGER now{};
+        QueryPerformanceCounter(&now);
+        InterlockedExchange64(&shared->lastQpc, now.QuadPart);
+        if (chronoCounter) InterlockedExchange64(&shared->lastChrono, chronoCounter());
+        if (now.QuadPart < before.QuadPart) InterlockedIncrement(&shared->regressions);
+        // Mirror a game's before < now tick accumulator, preserving before
+        // during a pause instead of attempting to catch up on resume.
+        if (before.QuadPart < now.QuadPart) before = now;
+        gl.bindFramebuffer(GlFramebuffer, 0);
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthMask(GL_TRUE);
+        glViewport(0, 0, width, height);
+        glClearColor(0.04f, 0.08f, 0.12f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        // Simulate game state that would suppress a flat UI if not isolated,
+        // and verify the detour leaves the following game frame unaffected.
+        gameState.Apply(gl, width, height);
+        SwapBuffers(dc);
+        const auto swapError = glGetError();
+        if (swapError != GL_NO_ERROR) InterlockedExchange(&shared->swapError, static_cast<LONG>(swapError));
+        const LONG stateFailure = gameState.Check(width, height);
+        if (stateFailure) {
+            InterlockedIncrement(&shared->stateFailures);
+            InterlockedOr(&shared->stateFailureMask, stateFailure);
+        }
+        const auto stateError = glGetError();
+        if (stateError != GL_NO_ERROR) InterlockedExchange(&shared->swapError, static_cast<LONG>(stateError));
+        gl.bindFramebuffer(GlReadFramebuffer, 0);
+        glReadBuffer(GL_FRONT);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        const auto preparationError = glGetError();
+        if (preparationError != GL_NO_ERROR) InterlockedExchange(&shared->readbackError, static_cast<LONG>(preparationError));
+        glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+        const GLenum readbackError = glGetError();
+        if (readbackError != GL_NO_ERROR) InterlockedExchange(&shared->readbackError, static_cast<LONG>(readbackError));
+        std::uint64_t hash = 1469598103934665603ULL;
+        for (unsigned char pixel : pixels) { hash ^= pixel; hash *= 1099511628211ULL; }
+        InterlockedExchange64(&shared->pixelHash, static_cast<LONG64>(hash));
+        const LONG captureVariant = InterlockedCompareExchange(&shared->captureRequest, 0, 0);
+        if (captureVariant) {
+            SavePreview(width, height, pixels, captureVariant, compact);
+            InterlockedExchange(&shared->captureRequest, 0);
+        }
+        InterlockedIncrement(&shared->frames);
+        Sleep(10);
+      }
+      gameState.Destroy(gl);
+      } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        InterlockedExchange(&shared->initializationError, 2);
+      }
+      wglMakeCurrent(nullptr, nullptr);
+    });
+    while (!InterlockedCompareExchange(&shared->quit, 0, 0)) {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&message); DispatchMessageW(&message);
+        }
+        Sleep(1);
+    }
+    renderThread.join();
+    wglDeleteContext(context);
+    ReleaseDC(window, dc);
+    DestroyWindow(window);
+    if (standardLibrary) FreeLibrary(standardLibrary);
+    UnmapViewOfFile(shared);
+    CloseHandle(mapping);
+    return 0;
+}
+
+void Require(bool condition, const std::string& message) {
+    if (!condition) throw std::runtime_error(message);
+}
+std::int64_t Number(const std::string& json, const std::string& key) {
+    const std::string marker = "\"" + key + "\":";
+    const auto index = json.find(marker);
+    Require(index != std::string::npos, "Missing response field: " + key + ": " + json);
+    std::int64_t value = 0;
+    const auto* start = json.data() + index + marker.size();
+    const auto parsed = std::from_chars(start, json.data() + json.size(), value);
+    Require(parsed.ec == std::errc{}, "Invalid response field: " + key);
+    return value;
+}
+std::string Command(DWORD pid, const std::string& command) {
+    const auto response = gamespeed::SendCommand(pid, command);
+    Require(response.ok, command + " failed: " + response.message);
+    return response.message;
+}
+double Slope(DWORD pid, SharedState* shared, const std::string& speed) {
+    Command(pid, "set " + speed);
+    Sleep(40); // Let a child sample observe the new multiplier.
+    const auto childBefore = InterlockedCompareExchange64(&shared->lastQpc, 0, 0);
+    const auto chronoBefore = InterlockedCompareExchange64(&shared->lastChrono, 0, 0);
+    LARGE_INTEGER parentBefore{}, parentAfter{};
+    QueryPerformanceCounter(&parentBefore);
+    const auto before = Command(pid, "status");
+    Sleep(500);
+    const auto after = Command(pid, "status");
+    QueryPerformanceCounter(&parentAfter);
+    const auto childAfter = InterlockedCompareExchange64(&shared->lastQpc, 0, 0);
+    const auto chronoAfter = InterlockedCompareExchange64(&shared->lastChrono, 0, 0);
+    const auto virtualDelta = Number(after, "virtualCounter") - Number(before, "virtualCounter");
+    const auto realDelta = Number(after, "realCounter") - Number(before, "realCounter");
+    Require(realDelta > 0, "Real QPC did not advance");
+    const double childSlope = static_cast<double>(childAfter - childBefore) / static_cast<double>(parentAfter.QuadPart - parentBefore.QuadPart);
+    const double expected = std::stod(speed);
+    Require(std::abs(childSlope - expected) < 0.18, "Actual main-EXE QPC slope incorrect: " + std::to_string(childSlope));
+    if (chronoBefore != 0 && chronoAfter != 0) {
+        const double chronoSlope = static_cast<double>(chronoAfter - chronoBefore) / static_cast<double>(parentAfter.QuadPart - parentBefore.QuadPart);
+        Require(std::abs(chronoSlope - expected) < 0.18, "Main-EXE MSVC chrono wrapper slope incorrect: " + std::to_string(chronoSlope));
+    }
+    return static_cast<double>(virtualDelta) / static_cast<double>(realDelta);
+}
+}
+
+int wmain(int argc, wchar_t** argv) {
+    if ((argc == 3 || argc == 4) && std::wstring_view(argv[1]) == L"--child")
+        return Child(argv[2], argc == 4 && std::wstring_view(argv[3]) == L"--compact");
+    const bool compact = argc == 3 && std::wstring_view(argv[2]) == L"--compact";
+    const bool overview = argc == 3 && std::wstring_view(argv[2]) == L"--overview";
+    if (argc != 2 && !compact && !overview) return 2;
+    const auto mappingName = L"Local\\MCDK.GameSpeed.Test." + std::to_wstring(GetCurrentProcessId());
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(SharedState), mappingName.c_str());
+    if (!mapping) return 3;
+    auto* shared = static_cast<SharedState*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
+    if (!shared) { CloseHandle(mapping); return 4; }
+    std::array<wchar_t, 32768> self{};
+    GetModuleFileNameW(nullptr, self.data(), static_cast<DWORD>(self.size()));
+    std::wstring childCommand = L"\"" + std::wstring(self.data()) + L"\" --child \"" + mappingName + L"\"";
+    if (compact) childCommand += L" --compact";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION child{};
+    if (!CreateProcessW(self.data(), childCommand.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child)) {
+        UnmapViewOfFile(shared); CloseHandle(mapping); return 5;
+    }
+    int exitCode = 0;
+    try {
+        for (int attempt = 0; attempt < 200 && InterlockedCompareExchange(&shared->frames, 0, 0) < 3; ++attempt) {
+            if (InterlockedCompareExchange(&shared->initializationError, 0, 0) ||
+                WaitForSingleObject(child.hProcess, 0) == WAIT_OBJECT_0) break;
+            Sleep(10);
+        }
+        Require(InterlockedCompareExchange(&shared->initializationError, 0, 0) == 0,
+            "Core OpenGL child initialization failed: " + std::to_string(shared->initializationError));
+        Require(InterlockedCompareExchange(&shared->frames, 0, 0) >= 3, "Isolated OpenGL child failed to start");
+        Require(shared->contextMajor == 3 && shared->contextMinor == 2,
+            "Isolated OpenGL context must exercise the game's OpenGL 3.2 version");
+        Require((shared->contextProfile & GlCoreProfileBit) != 0, "Isolated OpenGL context is not a core profile");
+        Require(shared->windowThread != shared->renderThread, "Window and render test threads must differ");
+        const auto baseline = InterlockedCompareExchange64(&shared->pixelHash, 0, 0);
+        const auto attached = gamespeed::Inject(child.dwProcessId, argv[1]);
+        Require(attached.ok, "Injection failed: " + attached.message);
+        // A duplicate attach must reuse the existing worker and pipe.
+        Require(gamespeed::Inject(child.dwProcessId, argv[1]).ok, "Duplicate injection did not reuse the DLL");
+        std::string status;
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            status = Command(child.dwProcessId, "status");
+            if (status.find("\"overlayReady\":true") != std::string::npos) break;
+            Sleep(20);
+        }
+        Require(status.find("\"overlayReady\":true") != std::string::npos, "RmlUi initialization failed: " + status);
+        Require(Number(status, "scaledCalls") > 0, "Main executable QPC calls were not hooked");
+        Command(child.dwProcessId, "show");
+        Sleep(450);
+        Require(InterlockedCompareExchange64(&shared->pixelHash, 0, 0) != baseline, "RmlUi did not change the OpenGL framebuffer");
+        InterlockedExchange(&shared->captureRequest, 1);
+        Sleep(100);
+        Command(child.dwProcessId, "hide");
+        const HWND window = reinterpret_cast<HWND>(InterlockedCompareExchange64(&shared->window, 0, 0));
+        Require(PostMessageW(window, WM_KEYDOWN, VK_F8, 1) != FALSE, "Cannot deliver test F8 key");
+        PostMessageW(window, WM_KEYUP, VK_F8, (LPARAM(1) << 31) | 1);
+        Sleep(100);
+        Require(Command(child.dwProcessId, "status").find("\"uiVisible\":true") != std::string::npos,
+            "Window/render-thread input bootstrap failed: F8 did not reopen UI");
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            Require(PostMessageW(window, WM_KEYDOWN, VK_ESCAPE, 1) != FALSE, "Cannot deliver Escape close key");
+            PostMessageW(window, WM_KEYUP, VK_ESCAPE, (LPARAM(1) << 31) | 1);
+            Sleep(100);
+            Require(Command(child.dwProcessId, "status").find("\"uiVisible\":false") != std::string::npos,
+                "Escape did not close the overlay");
+            Require(PostMessageW(window, WM_KEYDOWN, VK_F8, 1) != FALSE, "Cannot deliver F8 after Escape");
+            PostMessageW(window, WM_KEYUP, VK_F8, (LPARAM(1) << 31) | 1);
+            Sleep(100);
+            Require(Command(child.dwProcessId, "status").find("\"uiVisible\":true") != std::string::npos,
+                "F8 could not reopen the overlay after Escape");
+        }
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            PostMessageW(window, WM_APP + 2, 1, 0);
+            PostMessageW(window, WM_KEYDOWN, 'G', 1);
+            // Release modifiers first, matching a common physical key order.
+            PostMessageW(window, WM_APP + 2, 0, 0);
+            PostMessageW(window, WM_KEYUP, 'G', (LPARAM(1) << 31) | 1);
+            Sleep(100);
+            Require(Command(child.dwProcessId, "status").find(attempt == 0 ? "\"uiVisible\":false" : "\"uiVisible\":true") != std::string::npos,
+                "Ctrl+Shift+G could not toggle the overlay after Escape");
+        }
+        Require(PostMessageW(window, WM_KEYDOWN, VK_INSERT, 1) != FALSE, "Cannot deliver legacy Insert key");
+        PostMessageW(window, WM_KEYUP, VK_INSERT, (LPARAM(1) << 31) | 1);
+        Sleep(100);
+        Require(Command(child.dwProcessId, "status").find("\"uiVisible\":false") != std::string::npos,
+            "Legacy Insert toggle did not hide UI");
+        Require(PostMessageW(window, WM_KEYDOWN, VK_F8, 1) != FALSE, "Cannot deliver F8 reopen key");
+        PostMessageW(window, WM_KEYUP, VK_F8, (LPARAM(1) << 31) | 1);
+        Sleep(100);
+        Require(Command(child.dwProcessId, "status").find("\"uiVisible\":true") != std::string::npos,
+            "F8 did not reopen UI after legacy Insert toggle");
+        const auto fast = Slope(child.dwProcessId, shared, "2");
+        Require(std::abs(fast - 2.0) < 0.05, "2x clock slope incorrect: " + std::to_string(fast));
+        InterlockedExchange(&shared->captureRequest, 3);
+        Sleep(120);
+        const auto slow = Slope(child.dwProcessId, shared, "0.25");
+        Require(std::abs(slow - 0.25) < 0.02, "0.25x clock slope incorrect: " + std::to_string(slow));
+        const auto pause = Command(child.dwProcessId, "pause");
+        const auto pausedCounter = Number(pause, "virtualCounter");
+        const ULONGLONG pauseDeadline = GetTickCount64() + 2000;
+        while (InterlockedCompareExchange64(&shared->lastQpc, 0, 0) != pausedCounter && GetTickCount64() < pauseDeadline)
+            Sleep(10);
+        Require(InterlockedCompareExchange64(&shared->lastQpc, 0, 0) == pausedCounter,
+            "Main-EXE QPC did not observe the frozen pause anchor");
+        const auto childPaused = InterlockedCompareExchange64(&shared->lastQpc, 0, 0);
+        Sleep(250);
+        InterlockedExchange(&shared->captureRequest, 2);
+        Sleep(120);
+        Require(InterlockedCompareExchange64(&shared->lastQpc, 0, 0) == childPaused, "Main-EXE QPC advanced while paused");
+        Require(Number(Command(child.dwProcessId, "status"), "virtualCounter") == Number(pause, "virtualCounter"), "Paused clock advanced");
+        Command(child.dwProcessId, "resume");
+        Require(!gamespeed::SendCommand(child.dwProcessId, "set nan").ok, "NaN speed was accepted");
+        Require(!gamespeed::SendCommand(child.dwProcessId, "set 17").ok, "Invalid speed was accepted");
+        const auto beforeReset = Command(child.dwProcessId, "status");
+        const auto reset = Command(child.dwProcessId, "reset");
+        Require(Number(reset, "virtualCounter") >= Number(beforeReset, "virtualCounter"), "Reset made the clock go backwards");
+        if (overview) {
+            Command(child.dwProcessId, "set 1"); Sleep(1500);
+            Command(child.dwProcessId, "set 4"); Sleep(2000);
+            Command(child.dwProcessId, "set 0.5"); Sleep(2000);
+            Command(child.dwProcessId, "pause"); Sleep(1500);
+            Command(child.dwProcessId, "resume");
+            Command(child.dwProcessId, "set 2"); Sleep(2000);
+            Command(child.dwProcessId, "set 1"); Sleep(2000);
+            InterlockedExchange(&shared->captureRequest, 4);
+            Sleep(250);
+        }
+        Command(child.dwProcessId, "shutdown");
+        status = Command(child.dwProcessId, "status");
+        Require(status.find("\"uiVisible\":false") != std::string::npos, "Shutdown did not hide UI");
+        Require(status.find("\"speed\":1,") != std::string::npos, "Shutdown did not return to 1x");
+        Require(InterlockedCompareExchange(&shared->regressions, 0, 0) == 0, "Game before/now observed backwards QPC");
+        Require(InterlockedCompareExchange(&shared->stateFailures, 0, 0) == 0,
+            "Overlay changed game OpenGL state (binding/viewport/mask/blend bitmask): " + std::to_string(shared->stateFailureMask));
+        Require(InterlockedCompareExchange(&shared->readbackError, 0, 0) == 0, "OpenGL framebuffer readback failed");
+        Require(InterlockedCompareExchange(&shared->swapError, 0, 0) == 0, "OpenGL overlay reported an error after SwapBuffers: " + std::to_string(shared->swapError));
+        std::cout << "Isolated x64 injection, QPC compensation, pause/resume, pipe validation and RmlUi OpenGL "
+            << shared->contextMajor << '.' << shared->contextMinor << " core rendering/state restoration passed\n";
+    } catch (const std::exception& error) { std::cerr << error.what() << '\n'; exitCode = 1; }
+    InterlockedExchange(&shared->quit, 1);
+    if (WaitForSingleObject(child.hProcess, 5000) != WAIT_OBJECT_0) {
+        TerminateProcess(child.hProcess, 1); // Only our isolated test child.
+        WaitForSingleObject(child.hProcess, 1000);
+        exitCode = 1;
+    }
+    DWORD childExit = 0;
+    if (!GetExitCodeProcess(child.hProcess, &childExit) || childExit != 0) {
+        std::cerr << "Isolated child exit failed: " << childExit << '\n';
+        exitCode = 1;
+    }
+    CloseHandle(child.hThread); CloseHandle(child.hProcess);
+    UnmapViewOfFile(shared); CloseHandle(mapping);
+    return exitCode;
+}

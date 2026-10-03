@@ -1,0 +1,33 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "windows-x64",
+      "displayName": "Windows x64 (Visual Studio)",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-x64-gl32"
+    },
+    {
+      "name": "core",
+      "displayName": "Portable clock tests",
+      "binaryDir": "${sourceDir}/build/core",
+      "cacheVariables": {
+        "GAMESPEED_BUILD_INJECTED": "OFF",
+        "GAMESPEED_BUILD_PLUGIN": "OFF",
+        "GAMESPEED_BUILD_TOOLS": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "release", "configurePreset": "windows-x64", "configuration": "Release" },
+    { "name": "debug", "configurePreset": "windows-x64", "configuration": "Debug" },
+    { "name": "core", "configurePreset": "core" }
+  ],
+  "testPresets": [
+    { "name": "release", "configurePreset": "windows-x64", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "debug", "configurePreset": "windows-x64", "configuration": "Debug", "output": { "outputOnFailure": true } },
+    { "name": "core", "configurePreset": "core", "output": { "outputOnFailure": true } }
+  ]
+}
