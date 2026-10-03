@@ -1206,6 +1206,8 @@ void SyncDocumentVisibility(bool panelVisible, bool hintVisible) {
     if (panelVisible != g_panelVisible) {
         if (!panelVisible)
             ResetUiInput();
+        if (auto* backdrop = g_document->GetElementById("panel-backdrop"))
+            backdrop->SetProperty("display", panelVisible ? "block" : "none");
         if (auto* panel = g_document->GetElementById("panel"))
             panel->SetProperty("display", panelVisible ? "flex" : "none");
         g_panelVisible = panelVisible;
