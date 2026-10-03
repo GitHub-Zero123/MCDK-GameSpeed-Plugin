@@ -3,7 +3,7 @@
   "id": "com.github-zero123.game-speed",
   "name": "Game Speed",
   "version": "0.1.0",
-  "description": "Inject a continuous high-resolution game clock and an OreUI speed panel. Entry shows a temporary shortcut hint; press F8 or Ctrl+Shift+G to open the panel.",
+  "description": "Control the verified native simulation timer while real-time rendering and input continue. OreUI shortcut hint on entry; F8 or Ctrl+Shift+G opens the panel.",
   "abi": {
     "major": 1,
     "minor": 0

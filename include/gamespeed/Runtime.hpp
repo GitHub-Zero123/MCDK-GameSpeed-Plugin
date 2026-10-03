@@ -18,6 +18,10 @@ struct ClockStatus {
     std::uint64_t scaledCalls = 0;
     std::int64_t virtualCounter = 0;
     std::int64_t realCounter = 0;
+    bool nativeTickReady = false;
+    std::int64_t simulationTicks = 0;
+    std::int64_t realTicks = 0;
+    std::uint32_t nativeTimerRva = 0;
 };
 // MinHook is initialized once by the DLL worker before these are called.
 bool InitializeClock(HMODULE self, std::string& error);
@@ -27,6 +31,7 @@ bool Paused();
 void TogglePause();
 void Reset();
 ClockStatus Status();
+std::string NativeTickError();
 std::int64_t RawCounter();
 std::int64_t CounterFrequency();
 

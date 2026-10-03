@@ -5,6 +5,7 @@
 #include <array>
 #include <charconv>
 #include <cctype>
+#include <cmath>
 #include <iomanip>
 #include <locale>
 #include <sstream>
@@ -34,6 +35,10 @@ std::string Snapshot(bool clockReady, const std::string& warning) {
         << ",\"paused\":" << (state.paused ? "true" : "false")
         << ",\"scaledCalls\":" << state.scaledCalls << ",\"virtualCounter\":" << state.virtualCounter
         << ",\"realCounter\":" << state.realCounter << ",\"frequency\":" << CounterFrequency()
+        << ",\"nativeTickReady\":" << (state.nativeTickReady ? "true" : "false")
+        << ",\"simulationTicks\":" << state.simulationTicks << ",\"realTicks\":" << state.realTicks
+        << ",\"nativeTimerRva\":" << state.nativeTimerRva
+        << ",\"nativeTickError\":\"" << Escape(NativeTickError()) << "\""
         << ",\"overlayReady\":" << (OverlayReady() ? "true" : "false")
         << ",\"uiVisible\":" << (UiVisible() ? "true" : "false")
         << ",\"startupHintVisible\":" << (StartupHintVisible() ? "true" : "false")
@@ -50,12 +55,17 @@ std::string Dispatch(std::string command, bool clockReady, const std::string& wa
         double speed = -1;
         const auto number = std::string_view(command).substr(4);
         const auto parsed = std::from_chars(number.data(), number.data() + number.size(), speed);
-        if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size() || !SetSpeed(speed))
+        if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size() ||
+            !std::isfinite(speed) || (speed != 0.0 && (speed < 0.01 || speed > 16.0)))
             return Failure("Speed must be 0 (pause) or a finite value from 0.01 to 16");
+        if (!SetSpeed(speed)) return Failure(NativeTickError().empty() ?
+            "Native simulation timer hook is unavailable; only 1x is supported" : NativeTickError());
     } else if (command == "pause") {
-        SetSpeed(0.0);
+        if (!SetSpeed(0.0)) return Failure(NativeTickError().empty() ?
+            "Native simulation timer hook is unavailable; pause was not applied" : NativeTickError());
     } else if (command == "resume") {
-        SetSpeed(Status().resumeSpeed);
+        if (!SetSpeed(Status().resumeSpeed)) return Failure(NativeTickError().empty() ?
+            "Native simulation timer hook is unavailable; resume was not applied" : NativeTickError());
     } else if (command == "reset") Reset();
     else if (command == "show") SetUiVisible(true);
     else if (command == "hide") SetUiVisible(false);

@@ -134,12 +134,23 @@ int wmain(int argc, wchar_t** argv) {
         const auto duplicate = gamespeed::Inject(child.pid, dll, 2000);
         Require(duplicate.ok && duplicate.message.find("\"clockReady\":true") != std::string::npos,
             "Duplicate injection did not reuse the resident DLL and control pipe: " + duplicate.message);
-        const auto speed = gamespeed::SendCommand(child.pid, "set 2", 1000);
-        Require(speed.ok && speed.message.find("\"speed\":2,") != std::string::npos,
-            "Timer controls were unavailable after delayed loader initialization: " + speed.message);
+        // This child verifies loader readiness, and deliberately has no game
+        // timer adapter. An unrecognized build must never fall back to freezing
+        // every system timer merely because its loader is now available.
+        Require(duplicate.message.find("\"nativeTickReady\":false") != std::string::npos,
+            "The generic loader child was incorrectly recognized as a supported game");
+        const auto unsupportedPause = gamespeed::SendCommand(child.pid, "pause", 1000);
+        Require(!unsupportedPause.ok && unsupportedPause.message.find("only 1x is supported") != std::string::npos,
+            "An unrecognized timer profile did not reject pause: " + unsupportedPause.message);
+        const auto unsupportedSpeed = gamespeed::SendCommand(child.pid, "set 2", 1000);
+        Require(!unsupportedSpeed.ok, "An unrecognized timer profile accepted game speed control");
+        const auto normalSpeed = gamespeed::SendCommand(child.pid, "set 1", 1000);
+        Require(normalSpeed.ok && normalSpeed.message.find("\"speed\":1,") != std::string::npos &&
+            normalSpeed.message.find("\"paused\":false") != std::string::npos,
+            "Unknown-profile rejection did not leave a responsive 1x clock: " + normalSpeed.message);
         Require(gamespeed::SendCommand(child.pid, "reset", 1000).ok,
             "Cannot reset the isolated child's timer");
-        std::cout << "Suspended-loader timeout, delayed initialization, resident DLL reuse and timer control passed\n";
+        std::cout << "Suspended-loader timeout, delayed initialization, resident DLL reuse and safe unknown-profile rejection passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         exitCode = 1;

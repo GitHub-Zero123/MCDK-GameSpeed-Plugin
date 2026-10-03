@@ -135,6 +135,11 @@ if(GAMESPEED_BUILD_TOOLS)
         set_target_properties(gamespeed_gl_probe PROPERTIES
             PREFIX "" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/probe/$<CONFIG>")
         gamespeed_warnings(gamespeed_gl_probe)
+        add_library(gamespeed_timer_probe SHARED EXCLUDE_FROM_ALL tools/TimerCallProbe.cpp)
+        target_link_libraries(gamespeed_timer_probe PRIVATE minhook)
+        set_target_properties(gamespeed_timer_probe PROPERTIES
+            PREFIX "" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/probe/$<CONFIG>")
+        gamespeed_warnings(gamespeed_timer_probe)
     endif()
 endif()
 

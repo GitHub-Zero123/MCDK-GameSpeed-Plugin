@@ -28,10 +28,12 @@ constexpr std::size_t kInputCapacity = 512;
 using SwapFunction = BOOL(WINAPI*)(HDC);
 using ClipFunction = BOOL(WINAPI*)(const RECT*);
 using PositionFunction = BOOL(WINAPI*)(int, int);
+using CursorFunction = HCURSOR(WINAPI*)(HCURSOR);
 SwapFunction g_swap = nullptr;
 SwapFunction g_wglSwap = nullptr;
 ClipFunction g_clip = nullptr;
 PositionFunction g_position = nullptr;
+CursorFunction g_cursor = nullptr;
 HMODULE g_module = nullptr;
 std::filesystem::path g_assetDirectory;
 std::atomic<bool> g_visible{false};
@@ -41,6 +43,10 @@ std::atomic<bool> g_ready{false};
 std::atomic<HWND> g_window{nullptr};
 std::atomic<HWND> g_subclassWindow{nullptr};
 std::atomic<DWORD> g_renderThread{0};
+// Foreground ownership can change after a focus notification is dispatched.
+// Keep a separate gate so WM_KILLFOCUS cannot leave the UI capturing input
+// until the next posted cursor update happens to run.
+std::atomic<bool> g_windowInputInactive{false};
 UINT g_installMessage = 0;
 UINT g_cursorMessage = 0;
 std::mutex g_bootstrapMutex;
@@ -55,6 +61,7 @@ int g_cursorIncrements = 0;
 bool g_cursorCaptured = false;
 bool g_toggleChordHeld = false;
 UINT g_uiMouseButtons = 0;
+UINT g_activationMouseButtons = 0;
 bool g_uiOwnsMouseCapture = false;
 bool g_releasingUiMouseCapture = false;
 std::atomic<HCURSOR> g_uiCursor{nullptr};
@@ -74,10 +81,29 @@ void ReportError(const std::string& message) {
     Log(message);
 }
 
-bool CapturesInput() {
+bool PanelOwnsWindowInput() {
+    return g_window.load(std::memory_order_acquire) && g_ready.load(std::memory_order_acquire) &&
+        g_visible.load(std::memory_order_acquire);
+}
+
+bool GameIsForeground() {
     const HWND window = g_window.load(std::memory_order_acquire);
-    return window && g_ready.load(std::memory_order_acquire) &&
-        g_visible.load(std::memory_order_acquire) && GetForegroundWindow() == GetAncestor(window, GA_ROOT);
+    return window && GetForegroundWindow() == GetAncestor(window, GA_ROOT);
+}
+
+bool CapturesInput() {
+    // Global cursor APIs need foreground ownership. Window-message ownership
+    // instead lasts for the whole modal panel, including activation transitions.
+    return PanelOwnsWindowInput() && !g_windowInputInactive.load(std::memory_order_acquire) && GameIsForeground();
+}
+
+UINT MouseButtonMask(UINT message) {
+    switch (message) {
+    case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK: return 1;
+    case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK: return 2;
+    case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK: return 4;
+    default: return 0;
+    }
 }
 
 void RequestCursorUpdate() {
@@ -98,12 +124,41 @@ void ReleaseUiMouseCapture(HWND window) {
     }
 }
 
-void UpdateCursorOnWindowThread() {
+void EnsureCursorVisibleOnWindowThread() {
+    // Probe the current ShowCursor counter without accumulating an extra
+    // increment when it is already visible. Remember only the increments
+    // needed by the UI, so hiding it restores the game's requested count.
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        const int count = ShowCursor(TRUE);
+        if (count > 0)
+            ShowCursor(FALSE);
+        else
+            ++g_cursorIncrements;
+        if (count >= 0)
+            break;
+    }
+}
+
+void ApplyUiCursorOnWindowThread() {
+    const HCURSOR cursor = g_uiCursor.load(std::memory_order_relaxed);
+    g_cursor(cursor ? cursor : LoadCursorW(nullptr, IDC_ARROW));
+}
+
+void UpdateCursorOnWindowThread(bool refreshVisibility = false) {
+    if (!PanelOwnsWindowInput()) g_activationMouseButtons = 0;
     const bool capture = CapturesInput();
     if (!capture)
         ReleaseUiMouseCapture(g_subclassWindow.load(std::memory_order_acquire));
-    if (capture == g_cursorCaptured)
+    if (capture == g_cursorCaptured) {
+        if (capture && refreshVisibility) {
+            // A game's WM_SETFOCUS handler may hide the pointer again even
+            // though the panel was already open. Repair on this event only.
+            EnsureCursorVisibleOnWindowThread();
+            g_clip(nullptr);
+            ApplyUiCursorOnWindowThread();
+        }
         return;
+    }
     g_cursorCaptured = capture;
     if (capture) {
         RECT current{};
@@ -117,13 +172,8 @@ void UpdateCursorOnWindowThread() {
             g_hasRequestedClip = true;
         }
         g_clip(nullptr);
-        // ShowCursor is a counter. Undo exactly our increments when the panel closes.
-        for (int attempt = 0; attempt < 32; ++attempt) {
-            ++g_cursorIncrements;
-            if (ShowCursor(TRUE) >= 0)
-                break;
-        }
-        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        EnsureCursorVisibleOnWindowThread();
+        ApplyUiCursorOnWindowThread();
         const HWND inputWindow = g_subclassWindow.load(std::memory_order_acquire);
         // A key released while the panel is open is consumed by the UI. Release
         // keys already held by the game at capture start so GLFW cannot keep W,
@@ -155,7 +205,8 @@ void UpdateCursorOnWindowThread() {
         }
         std::lock_guard lock(g_clipMutex);
         // Never re-clip the desktop while another application has focus.
-        if (g_hasRequestedClip && GetForegroundWindow() == GetAncestor(g_window.load(), GA_ROOT))
+        if (g_hasRequestedClip && !g_windowInputInactive.load(std::memory_order_acquire) &&
+            GetForegroundWindow() == GetAncestor(g_window.load(), GA_ROOT))
             g_clip(g_requestedClipEmpty ? nullptr : &g_requestedClip);
     }
 }
@@ -175,6 +226,18 @@ BOOL WINAPI ClipCursorHook(const RECT* rect) {
 BOOL WINAPI SetCursorPositionHook(int x, int y) {
     // GLFW's disabled cursor mode continually warps the cursor to the centre.
     return CapturesInput() ? TRUE : g_position(x, y);
+}
+
+HCURSOR WINAPI SetCursorHook(HCURSOR cursor) {
+    if (CapturesInput()) {
+        // Cursor mode can be re-applied in a later gameplay frame, after the
+        // focus messages have already returned. Keep its request from hiding
+        // or replacing the UI pointer for the whole input-capture interval.
+        const HCURSOR uiCursor = g_uiCursor.load(std::memory_order_relaxed);
+        cursor = uiCursor ? uiCursor : LoadCursorW(nullptr, IDC_ARROW);
+    }
+    // Preserve Win32's return value: the previous installed cursor handle.
+    return g_cursor(cursor);
 }
 
 struct InputEvent {
@@ -217,10 +280,7 @@ void ResetQueuedInput() {
 LRESULT CALLBACK WindowSubclass(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
     if (message == g_cursorMessage) {
         UpdateCursorOnWindowThread();
-        if (CapturesInput()) {
-            const HCURSOR cursor = g_uiCursor.load(std::memory_order_relaxed);
-            SetCursor(cursor ? cursor : LoadCursorW(nullptr, IDC_ARROW));
-        }
+        if (CapturesInput()) ApplyUiCursorOnWindowThread();
         return 0;
     }
     if (message == WM_NCDESTROY) {
@@ -234,18 +294,45 @@ LRESULT CALLBACK WindowSubclass(HWND window, UINT message, WPARAM wParam, LPARAM
         ResetQueuedInput();
         return DefSubclassProc(window, message, wParam, lParam);
     }
-    if (message == WM_ACTIVATEAPP || message == WM_KILLFOCUS) {
-        g_toggleChordHeld = false;
-        if (message == WM_KILLFOCUS || !wParam)
-            ReleaseUiMouseCapture(window);
-        ResetQueuedInput();
+    if (message == WM_MOUSEACTIVATE && PanelOwnsWindowInput() && LOWORD(lParam) == HTCLIENT) {
+        // This arrives before Windows changes foreground/focus. Let Windows
+        // activate the window, but never run the game's click-to-grab-HUD
+        // handler or deliver this activation gesture to a UI control.
+        g_activationMouseButtons |= MouseButtonMask(HIWORD(lParam));
         PostMessageW(window, g_cursorMessage, 0, 0);
+        return MA_ACTIVATEANDEAT;
+    }
+    if (message == WM_ACTIVATEAPP || message == WM_ACTIVATE || message == WM_SETFOCUS || message == WM_KILLFOCUS) {
+        const bool gainingFocus = message == WM_SETFOCUS ||
+            (message == WM_ACTIVATEAPP && wParam != FALSE) ||
+            (message == WM_ACTIVATE && LOWORD(wParam) != WA_INACTIVE);
+        g_windowInputInactive.store(!gainingFocus, std::memory_order_release);
+        g_toggleChordHeld = false;
+        if (!gainingFocus) {
+            g_activationMouseButtons = 0;
+            ReleaseUiMouseCapture(window);
+        }
+        ResetQueuedInput();
+        // Balance our ShowCursor changes before the game handles focus loss.
+        // On focus gain, start interception first so its ClipCursor/warp calls
+        // are remembered rather than locking the pointer back into gameplay.
+        UpdateCursorOnWindowThread();
+        const LRESULT result = DefSubclassProc(window, message, wParam, lParam);
+        // GLFW re-applies its disabled cursor in WM_SETFOCUS. Override that
+        // after the original handler has finished, on this same owner thread.
+        if (gainingFocus)
+            UpdateCursorOnWindowThread(true);
+        PostMessageW(window, g_cursorMessage, 0, 0);
+        return result;
     }
     if (message == WM_CAPTURECHANGED && reinterpret_cast<HWND>(lParam) != window) {
         g_uiMouseButtons = 0;
         g_uiOwnsMouseCapture = false;
         if (!g_releasingUiMouseCapture)
             ResetQueuedInput();
+        // Capture changes caused by the UI's own mouse gestures must not
+        // trigger the game's attempt to return to relative/HUD mouse mode.
+        if (PanelOwnsWindowInput()) return 0;
     }
     const bool keyDown = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
     const bool keyUp = message == WM_KEYUP || message == WM_SYSKEYUP;
@@ -262,13 +349,14 @@ LRESULT CALLBACK WindowSubclass(HWND window, UINT message, WPARAM wParam, LPARAM
     }
     if ((message == WM_SYSKEYDOWN || message == WM_SYSKEYUP) && wParam == VK_F4)
         return DefSubclassProc(window, message, wParam, lParam);
-    if (CapturesInput()) {
+    if (PanelOwnsWindowInput()) {
         switch (message) {
         case WM_SETCURSOR:
-            {
-                const HCURSOR cursor = g_uiCursor.load(std::memory_order_relaxed);
-                SetCursor(cursor ? cursor : LoadCursorW(nullptr, IDC_ARROW));
+            if (GameIsForeground()) {
+                g_windowInputInactive.store(false, std::memory_order_release);
+                UpdateCursorOnWindowThread();
             }
+            ApplyUiCursorOnWindowThread();
             return TRUE;
         case WM_INPUT:
             // DefWindowProc performs the documented foreground raw-input cleanup.
@@ -282,6 +370,17 @@ LRESULT CALLBACK WindowSubclass(HWND window, UINT message, WPARAM wParam, LPARAM
         case WM_CHAR: case WM_UNICHAR: {
             if (message == WM_UNICHAR && wParam == UNICODE_NOCHAR)
                 return TRUE;
+            // Do not hand a queued click/raw input back to gameplay merely
+            // because focus notifications and foreground ownership disagree.
+            const UINT activationButton = MouseButtonMask(message);
+            if (activationButton && (g_activationMouseButtons & activationButton)) {
+                if (message == WM_LBUTTONUP || message == WM_RBUTTONUP || message == WM_MBUTTONUP)
+                    g_activationMouseButtons &= ~activationButton;
+                return 0;
+            }
+            if (!GameIsForeground()) return 0;
+            g_windowInputInactive.store(false, std::memory_order_release);
+            UpdateCursorOnWindowThread();
             UINT mouseButton = 0;
             bool mouseDown = false;
             switch (message) {
@@ -1623,7 +1722,8 @@ bool InitializeOverlay(HMODULE self, std::string& error) {
     const HMODULE user32 = GetModuleHandleW(L"user32.dll");
     const auto clip = reinterpret_cast<void*>(GetProcAddress(user32, "ClipCursor"));
     const auto position = reinterpret_cast<void*>(GetProcAddress(user32, "SetCursorPos"));
-    if (!swap || !clip || !position || !g_installMessage || !g_cursorMessage) {
+    const auto cursor = reinterpret_cast<void*>(GetProcAddress(user32, "SetCursor"));
+    if (!swap || !clip || !position || !cursor || !g_installMessage || !g_cursorMessage) {
         error = "Required OpenGL/Win32 overlay entry points are unavailable.";
         return false;
     }
@@ -1631,7 +1731,8 @@ bool InitializeOverlay(HMODULE self, std::string& error) {
     if (!InstallHook(swap, reinterpret_cast<void*>(SwapHook), reinterpret_cast<void**>(&g_swap), targets, error) ||
         (wglSwap && wglSwap != swap && !InstallHook(wglSwap, reinterpret_cast<void*>(WglSwapHook), reinterpret_cast<void**>(&g_wglSwap), targets, error)) ||
         !InstallHook(clip, reinterpret_cast<void*>(ClipCursorHook), reinterpret_cast<void**>(&g_clip), targets, error) ||
-        !InstallHook(position, reinterpret_cast<void*>(SetCursorPositionHook), reinterpret_cast<void**>(&g_position), targets, error)) {
+        !InstallHook(position, reinterpret_cast<void*>(SetCursorPositionHook), reinterpret_cast<void**>(&g_position), targets, error) ||
+        !InstallHook(cursor, reinterpret_cast<void*>(SetCursorHook), reinterpret_cast<void**>(&g_cursor), targets, error)) {
         for (void* target : targets) { MH_DisableHook(target); MH_RemoveHook(target); }
         return false;
     }
