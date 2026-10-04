@@ -42,6 +42,8 @@ bool UiVisible();
 bool StartupHintVisible();
 bool OverlayReady();
 std::string OverlayError();
+void BeginInputTrace();
+std::string EndInputTrace();
 // Stop UI work and return the clock to continuous 1x. DLL stays resident.
 void DeactivateOverlay();
 }

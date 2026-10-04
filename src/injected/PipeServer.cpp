@@ -50,6 +50,11 @@ std::string Snapshot(bool clockReady, const std::string& warning) {
 std::string Dispatch(std::string command, bool clockReady, const std::string& warning) {
     std::transform(command.begin(), command.end(), command.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (command == "status") return Snapshot(clockReady, warning);
+    if (command == "input-trace-start") { BeginInputTrace(); return Snapshot(clockReady, warning); }
+    if (command == "input-trace-stop") {
+        const auto file = EndInputTrace();
+        return file.empty() ? Failure("Cannot write input trace") : "{\"ok\":true,\"traceFile\":\"" + Escape(file) + "\"}";
+    }
     if (!clockReady) return Failure("Clock hook is unavailable: " + warning);
     if (command.starts_with("set ")) {
         double speed = -1;

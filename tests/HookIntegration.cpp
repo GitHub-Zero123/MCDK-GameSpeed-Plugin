@@ -499,13 +499,21 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
             const HCURSOR previous = SetCursor(nullptr);
             if (!GetCursor() || previous != before)
                 InterlockedIncrement(&childShared->cursorApiFailures);
+            const int beforeCount = ShowCursor(TRUE) - 1;
+            ShowCursor(FALSE);
+            const int hiddenCount = ShowCursor(FALSE);
+            const int restoredCount = ShowCursor(TRUE);
+            if (hiddenCount != beforeCount - 1 || restoredCount != beforeCount)
+                InterlockedIncrement(&childShared->cursorApiFailures);
         }
         const bool visible = GetCursor() != nullptr;
         // ShowCursor belongs to this isolated window owner's input queue.
         // Read its count with one immediately balanced probe.
         const int probed = ShowCursor(TRUE);
         ShowCursor(FALSE);
-        InterlockedExchange(&childShared->cursorVisible, visible && probed > 0 ? 1 : 0);
+        // ShowCursor now returns the game's logical count. The physical count
+        // invariant and hide-until-negative loops have a separate unit test.
+        InterlockedExchange(&childShared->cursorVisible, visible ? 1 : 0);
         InterlockedExchange(&childShared->cursorCounter, probed - 1);
         InterlockedIncrement(&childShared->cursorCheckSerial);
         return 0;

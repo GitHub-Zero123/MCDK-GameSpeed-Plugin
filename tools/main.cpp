@@ -8,7 +8,7 @@ namespace {
 void Usage() {
     std::cout << "GameSpeed (Windows x64)\n"
         << "  gamespeed inject <pid> <absolute-path-to-gamespeed_hook.dll>\n"
-        << "  gamespeed <status|pause|resume|reset|show|hide|shutdown> <pid>\n"
+        << "  gamespeed <status|pause|resume|reset|show|hide|shutdown|input-trace-start|input-trace-stop> <pid>\n"
         << "  gamespeed set <pid> <0 or 0.01..16>\n"
         << "F8 / Ctrl+Shift+G toggles the in-game RmlUi panel. shutdown restores continuous 1x and hides it.\n";
 }
@@ -33,7 +33,7 @@ int wmain(int argc, wchar_t** argv) {
     gamespeed::Result result;
     if (op == "inject" && argc == 4) result = gamespeed::Inject(pid, argv[3]);
     else if (op == "set" && argc == 4) result = gamespeed::SendCommand(pid, "set " + Utf8(argv[3]));
-    else if (argc == 3 && (op == "status" || op == "pause" || op == "resume" || op == "reset" || op == "show" || op == "hide" || op == "shutdown"))
+    else if (argc == 3 && (op == "status" || op == "pause" || op == "resume" || op == "reset" || op == "show" || op == "hide" || op == "shutdown" || op == "input-trace-start" || op == "input-trace-stop"))
         result = gamespeed::SendCommand(pid, op);
     else { Usage(); return 2; }
     (result.ok ? std::cout : std::cerr) << result.message << '\n';

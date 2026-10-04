@@ -1,4 +1,5 @@
 #include <gamespeed/Runtime.hpp>
+#include <gamespeed/CursorVisibility.hpp>
 
 #include <MinHook.h>
 #include <RmlUi/Core.h>
@@ -16,6 +17,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <intrin.h>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -29,11 +32,15 @@ using SwapFunction = BOOL(WINAPI*)(HDC);
 using ClipFunction = BOOL(WINAPI*)(const RECT*);
 using PositionFunction = BOOL(WINAPI*)(int, int);
 using CursorFunction = HCURSOR(WINAPI*)(HCURSOR);
+using ShowCursorFunction = int(WINAPI*)(BOOL);
+using CaptureFunction = HWND(WINAPI*)(HWND);
 SwapFunction g_swap = nullptr;
 SwapFunction g_wglSwap = nullptr;
 ClipFunction g_clip = nullptr;
 PositionFunction g_position = nullptr;
 CursorFunction g_cursor = nullptr;
+ShowCursorFunction g_showCursor = nullptr;
+CaptureFunction g_capture = nullptr;
 HMODULE g_module = nullptr;
 std::filesystem::path g_assetDirectory;
 std::atomic<bool> g_visible{false};
@@ -57,7 +64,7 @@ RECT g_requestedClip{};
 bool g_hasRequestedClip = false;
 bool g_requestedClipEmpty = true;
 // These belong to the window's thread, never the worker or render thread.
-int g_cursorIncrements = 0;
+CursorVisibility g_cursorVisibility;
 bool g_cursorCaptured = false;
 bool g_toggleChordHeld = false;
 UINT g_uiMouseButtons = 0;
@@ -67,6 +74,32 @@ bool g_releasingUiMouseCapture = false;
 std::atomic<HCURSOR> g_uiCursor{nullptr};
 std::mutex g_errorMutex;
 std::string g_overlayError;
+
+struct InputTraceEntry {
+    ULONGLONG time;
+    DWORD thread;
+    const char* event;
+    std::uintptr_t value;
+    std::intptr_t result;
+    std::uintptr_t caller;
+    HWND foreground;
+    bool visible;
+    bool inactive;
+};
+std::atomic<bool> g_inputTraceEnabled{false};
+std::mutex g_inputTraceMutex;
+std::array<InputTraceEntry, 1024> g_inputTrace;
+std::size_t g_inputTraceNext = 0, g_inputTraceCount = 0;
+
+void TraceInput(const char* event, std::uintptr_t value = 0, std::intptr_t result = 0, std::uintptr_t caller = 0) {
+    if (!g_inputTraceEnabled.load(std::memory_order_relaxed)) return;
+    std::unique_lock lock(g_inputTraceMutex, std::try_to_lock);
+    if (!lock || !g_inputTraceEnabled.load(std::memory_order_relaxed)) return;
+    g_inputTrace[g_inputTraceNext] = {GetTickCount64(), GetCurrentThreadId(), event, value, result, caller,
+        GetForegroundWindow(), g_visible.load(), g_windowInputInactive.load()};
+    g_inputTraceNext = (g_inputTraceNext + 1) % g_inputTrace.size();
+    g_inputTraceCount = std::min(g_inputTraceCount + 1, g_inputTrace.size());
+}
 
 void Log(const std::string& message) {
     const std::string line = "[MCDK GameSpeed UI] " + message + "\n";
@@ -125,18 +158,7 @@ void ReleaseUiMouseCapture(HWND window) {
 }
 
 void EnsureCursorVisibleOnWindowThread() {
-    // Probe the current ShowCursor counter without accumulating an extra
-    // increment when it is already visible. Remember only the increments
-    // needed by the UI, so hiding it restores the game's requested count.
-    for (int attempt = 0; attempt < 32; ++attempt) {
-        const int count = ShowCursor(TRUE);
-        if (count > 0)
-            ShowCursor(FALSE);
-        else
-            ++g_cursorIncrements;
-        if (count >= 0)
-            break;
-    }
+    g_cursorVisibility.Acquire(g_showCursor);
 }
 
 void ApplyUiCursorOnWindowThread() {
@@ -199,10 +221,7 @@ void UpdateCursorOnWindowThread(bool refreshVisibility = false) {
         if (GetKeyState(VK_MBUTTON) & 0x8000) DefSubclassProc(inputWindow, WM_MBUTTONUP, 0, mousePosition);
         ReleaseCapture();
     } else {
-        while (g_cursorIncrements > 0) {
-            ShowCursor(FALSE);
-            --g_cursorIncrements;
-        }
+        g_cursorVisibility.Release(g_showCursor);
         std::lock_guard lock(g_clipMutex);
         // Never re-clip the desktop while another application has focus.
         if (g_hasRequestedClip && !g_windowInputInactive.load(std::memory_order_acquire) &&
@@ -212,6 +231,7 @@ void UpdateCursorOnWindowThread(bool refreshVisibility = false) {
 }
 
 BOOL WINAPI ClipCursorHook(const RECT* rect) {
+    TraceInput("clip", reinterpret_cast<std::uintptr_t>(rect), CapturesInput(), reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
     if (CapturesInput()) {
         std::lock_guard lock(g_clipMutex);
         if (rect)
@@ -224,11 +244,13 @@ BOOL WINAPI ClipCursorHook(const RECT* rect) {
 }
 
 BOOL WINAPI SetCursorPositionHook(int x, int y) {
+    TraceInput("warp", static_cast<std::uintptr_t>(static_cast<unsigned int>(x)), y, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
     // GLFW's disabled cursor mode continually warps the cursor to the centre.
     return CapturesInput() ? TRUE : g_position(x, y);
 }
 
 HCURSOR WINAPI SetCursorHook(HCURSOR cursor) {
+    TraceInput("cursor", reinterpret_cast<std::uintptr_t>(cursor), CapturesInput(), reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
     if (CapturesInput()) {
         // Cursor mode can be re-applied in a later gameplay frame, after the
         // focus messages have already returned. Keep its request from hiding
@@ -238,6 +260,25 @@ HCURSOR WINAPI SetCursorHook(HCURSOR cursor) {
     }
     // Preserve Win32's return value: the previous installed cursor handle.
     return g_cursor(cursor);
+}
+
+int WINAPI ShowCursorHook(BOOL show) {
+    // The game can enter hidden/relative mode in a later frame, well after
+    // WM_SETFOCUS and WM_MOUSEACTIVATE. Return its logical display count so
+    // while (ShowCursor(FALSE) >= 0) terminates, while keeping ours visible.
+    const HWND window = g_subclassWindow.load(std::memory_order_acquire);
+    const bool owner = window && GetWindowThreadProcessId(window, nullptr) == GetCurrentThreadId();
+    const auto result = owner && CapturesInput() ?
+        g_cursorVisibility.Change(show != FALSE, g_showCursor) : g_showCursor(show);
+    TraceInput("show", show, result, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+    return result;
+}
+
+HWND WINAPI ObserveCapture(HWND window) {
+    const auto result = g_capture(window);
+    TraceInput("capture", reinterpret_cast<std::uintptr_t>(window), reinterpret_cast<std::intptr_t>(result),
+        reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+    return result;
 }
 
 struct InputEvent {
@@ -278,6 +319,10 @@ void ResetQueuedInput() {
 }
 
 LRESULT CALLBACK WindowSubclass(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    if (message == WM_MOUSEACTIVATE || message == WM_ACTIVATE || message == WM_ACTIVATEAPP ||
+        message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_CAPTURECHANGED ||
+        message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_RBUTTONDOWN || message == WM_RBUTTONUP)
+        TraceInput("message", message, static_cast<std::intptr_t>(wParam));
     if (message == g_cursorMessage) {
         UpdateCursorOnWindowThread();
         if (CapturesInput()) ApplyUiCursorOnWindowThread();
@@ -1723,7 +1768,9 @@ bool InitializeOverlay(HMODULE self, std::string& error) {
     const auto clip = reinterpret_cast<void*>(GetProcAddress(user32, "ClipCursor"));
     const auto position = reinterpret_cast<void*>(GetProcAddress(user32, "SetCursorPos"));
     const auto cursor = reinterpret_cast<void*>(GetProcAddress(user32, "SetCursor"));
-    if (!swap || !clip || !position || !cursor || !g_installMessage || !g_cursorMessage) {
+    const auto showCursor = reinterpret_cast<void*>(GetProcAddress(user32, "ShowCursor"));
+    const auto capture = reinterpret_cast<void*>(GetProcAddress(user32, "SetCapture"));
+    if (!swap || !clip || !position || !cursor || !showCursor || !capture || !g_installMessage || !g_cursorMessage) {
         error = "Required OpenGL/Win32 overlay entry points are unavailable.";
         return false;
     }
@@ -1732,7 +1779,9 @@ bool InitializeOverlay(HMODULE self, std::string& error) {
         (wglSwap && wglSwap != swap && !InstallHook(wglSwap, reinterpret_cast<void*>(WglSwapHook), reinterpret_cast<void**>(&g_wglSwap), targets, error)) ||
         !InstallHook(clip, reinterpret_cast<void*>(ClipCursorHook), reinterpret_cast<void**>(&g_clip), targets, error) ||
         !InstallHook(position, reinterpret_cast<void*>(SetCursorPositionHook), reinterpret_cast<void**>(&g_position), targets, error) ||
-        !InstallHook(cursor, reinterpret_cast<void*>(SetCursorHook), reinterpret_cast<void**>(&g_cursor), targets, error)) {
+        !InstallHook(cursor, reinterpret_cast<void*>(SetCursorHook), reinterpret_cast<void**>(&g_cursor), targets, error) ||
+        !InstallHook(showCursor, reinterpret_cast<void*>(ShowCursorHook), reinterpret_cast<void**>(&g_showCursor), targets, error) ||
+        !InstallHook(capture, reinterpret_cast<void*>(ObserveCapture), reinterpret_cast<void**>(&g_capture), targets, error)) {
         for (void* target : targets) { MH_DisableHook(target); MH_RemoveHook(target); }
         return false;
     }
@@ -1774,6 +1823,35 @@ bool OverlayReady() { return g_ready.load(std::memory_order_acquire); }
 std::string OverlayError() {
     std::lock_guard lock(g_errorMutex);
     return g_overlayError;
+}
+void BeginInputTrace() {
+    std::lock_guard lock(g_inputTraceMutex);
+    g_inputTraceNext = g_inputTraceCount = 0;
+    g_inputTraceEnabled.store(true, std::memory_order_release);
+}
+
+std::string EndInputTrace() {
+    g_inputTraceEnabled.store(false, std::memory_order_release);
+    std::lock_guard lock(g_inputTraceMutex);
+    const auto path = g_assetDirectory.parent_path() / (L"input-trace-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+    std::ofstream output(path, std::ios::binary);
+    if (!output) return {};
+    output << "{\"window\":" << reinterpret_cast<std::uintptr_t>(g_window.load())
+        << ",\"subclassWindow\":" << reinterpret_cast<std::uintptr_t>(g_subclassWindow.load())
+        << ",\"mainBase\":" << reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr))
+        << ",\"selfBase\":" << reinterpret_cast<std::uintptr_t>(g_module) << ",\"events\":[";
+    const auto begin = (g_inputTraceNext + g_inputTrace.size() - g_inputTraceCount) % g_inputTrace.size();
+    for (std::size_t i = 0; i < g_inputTraceCount; ++i) {
+        const auto& e = g_inputTrace[(begin + i) % g_inputTrace.size()];
+        if (i) output << ',';
+        output << "{\"ms\":" << e.time << ",\"thread\":" << e.thread << ",\"event\":\"" << e.event
+            << "\",\"value\":" << e.value << ",\"result\":" << e.result << ",\"caller\":" << e.caller
+            << ",\"foreground\":" << reinterpret_cast<std::uintptr_t>(e.foreground)
+            << ",\"visible\":" << (e.visible ? "true" : "false") << ",\"inactive\":" << (e.inactive ? "true" : "false") << '}';
+    }
+    output << "]}";
+    output.close();
+    return output ? RmlWin32::ConvertToUTF8(path.wstring()) : std::string{};
 }
 void DeactivateOverlay() {
     g_hintDismissRequested.store(true, std::memory_order_release);

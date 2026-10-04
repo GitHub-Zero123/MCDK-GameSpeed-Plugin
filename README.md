@@ -86,6 +86,10 @@ $hookDll = (Resolve-Path './build/windows-x64-gl32/plugins/game-speed/Release/ga
 
 面板打开期间持续接管发往游戏窗口的鼠标、键盘及原始输入，切换焦点不会把输入暂时交回 HUD。点击未激活的游戏窗口时，首次点击只用于激活窗口；随后正常操作面板。收起面板后恢复游戏输入。
 
+游戏可能在焦点消息结束后的后续帧再次调用 `ShowCursor(FALSE)`。因此除拦截空光标、鼠标居中和裁剪外，还隔离窗口线程的光标显示计数：向游戏返回其逻辑计数，保证隐藏/显示循环正常结束；面板占用输入时保留可见的实际计数，关闭或失焦时撤销补偿，避免反复切换焦点累积计数。
+
+排查实机输入问题时，可运行 `gamespeed input-trace-start <pid>`，复现后运行 `gamespeed input-trace-stop <pid>`。后者将最近最多 1024 条焦点、点击、光标和捕获事件写到插件目录的 `input-trace-<pid>.json`，包含线程和调用地址；采样默认关闭，不记录按键内容。
+
 滑块按原版 BaseSlider 的灰色轨道、绿色进度和 32×32 方形手柄绘制，保留悬停、拖动及键盘焦点反馈。刻度采用两段对数映射：左半段为 0.01～1 倍，右半段为 1～16 倍，1 倍位于正中；标尺为 0.01 / 0.1 / 1 / 4 / 16 倍。拖动实时更新倍率并保留两位小数，暂停时显示恢复倍率；拖动期间状态刷新不会抢回手柄位置。
 
 控制管道 `\\.\pipe\MCDK.GameSpeed.<pid>` 只允许同一 Windows 用户和 SYSTEM，并拒绝远程连接。注入器检查目标和 DLL 均为 x64，使用实际远程系统模块加 RVA 定位 `LoadLibraryW`，支持 Unicode DLL 路径。连接或加载超时会返回错误。
@@ -111,6 +115,8 @@ virtual_now = virtual_anchor + (real_now - real_anchor) * speed
 OpenGL 界面使用 RmlUi GL3 后端，要求桌面 OpenGL 3.2+，支持 Core 和兼容上下文。实际客户端创建的是 OpenGL 3.2 / GLSL 1.50；构建时在生成的后端副本中使用 GLSL 150，保留子模块原始代码。采样器对象按运行时版本和扩展启用。OpenGL ES、DirectX 和 Vulkan 暂未支持。窗口输入进入有界队列，RmlUi 操作仅在首次选定的渲染线程和上下文处理；线程或上下文更换需要重启客户端，避免将旧上下文的 GPU 资源错误删除到新上下文。UI 前后保存并恢复受影响的 GL 状态，窗口缩放更新布局；缺少渲染入口时，计时命令仍可单独使用。
 
 ## 验证与依赖
+
+分发打包：在仓库根目录运行 `pwsh -NoProfile -File tools/PackageRelease.ps1`。脚本构建 Release x64、运行 CTest、检查 PE 架构和运行库依赖，再从独立打包目录验证宿主加载与注入 UI。结果保存在 `dist/MCDK-GameSpeed-<版本>-windows-x64.zip`，附带 SHA-256 校验文件；包内包含用户安装说明和配置示例，不包含本机 `.mcdev.json` 或诊断记录。
 
 CTest 包含确定性时钟测试、边界/溢出/小数累计和多线程测试，以及加载真实宿主插件 DLL 的 ABI/配置和首次 IPC 注入时序测试。加载器回归测试创建暂停的独立进程，验证未初始化时的超时和恢复后注入成功；Windows 界面测试创建隐藏 OpenGL 3.2 Core 进程，验证真实 QPC/chrono 帧截止等待、simulation/real Timer 隔离、暂停恢复、RmlUi 绘制、GL 状态恢复，以及重复 Esc 关闭后使用 F8 / Ctrl+Shift+G 重开。组合键测试只修改独立测试线程的键盘状态，不占用桌面焦点。另有 420×360 小窗口验证。测试不启动本机游戏。
 

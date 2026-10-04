@@ -1,0 +1,31 @@
+Game Speed third-party notices
+
+RmlUi: MIT license; see licenses/RMLUI.txt.
+MinHook: BSD 2-Clause license; see licenses/MINHOOK.txt.
+MCDevTool plugin SDK: BSD 3-Clause license; see licenses/MCDEVTOOL.txt.
+nlohmann/json: MIT license; see licenses/NLOHMANN-JSON-MIT.txt.
+FreeType: used under the FreeType License; see licenses/FREETYPE-FTL.txt.
+The upstream alternative GPL license is also included for completeness.
+Portions of this software are copyright (C) 1996-2026 The FreeType Project
+(https://freetype.org). All rights reserved.
+
+Ore UI assets
+The supplied original font files and button textures retain their ownership
+and embedded metadata. Original filenames and hashes are recorded in
+assets/oreui/provenance.json. No additional license to these resources is
+granted by this plugin.
+
+OreBody-Regular.ttf, OreBody-Bold.ttf:
+Copyright 2015 Google Inc. All Rights Reserved.
+SIL Open Font License 1.1; see licenses/SIL-OFL-1.1.txt.
+
+OreCjk-Regular.otf:
+Copyright (C) 2014, 2015 Adobe Systems Incorporated (http://www.adobe.com/).
+SIL Open Font License 1.1; see licenses/SIL-OFL-1.1.txt.
+
+OreSeven.otf, OreTen.otf:
+(c) 2015-2020 Mojang AB. All rights reserved.
+Manufacturer listed in embedded font metadata: Canada Type.
+These files do not contain an embedded redistribution license.
+
+Original Ore UI button skins: supplied Minecraft Ore UI resources.
